@@ -10,8 +10,8 @@ SDL_CFLAGS = $(shell sdl2-config --cflags)
 SDL_LIBS = $(shell sdl2-config --libs)
 QEMU_68K ?= qemu-m68k
 AMIGA_FLAGS = -m68020-60 -O2 -Wall -Wextra -Wno-misleading-indentation -ffreestanding -fno-builtin -fno-pic -fno-pie -fno-common -fomit-frame-pointer -nostdlib -static -Iami3d/src/amiga -Iami3d/demo -Wl,--emit-relocs -Wl,--no-warn-rwx-segments -Wl,--build-id=none -Wl,-T,ami3d/demo/amiga.ld
-AMIGA_SRC = src/platform_amiga.c src/native_video.c src/vblank_68k.S ami3d/demo/start.S ami3d/src/amiga/render_68k.S ami3d/src/amiga/lmath_68k.S ami3d/src/amiga/lmath.c
-.PHONY: all pc host test test_pc test_68k amiga adf clean
+AMIGA_SRC = src/platform_amiga.c src/pointer.c src/native_video.c src/vblank_68k.S ami3d/demo/start.S ami3d/src/amiga/render_68k.S ami3d/src/amiga/lmath_68k.S ami3d/src/amiga/lmath.c
+.PHONY: all pc host test test_pc test_68k bench_68k amiga adf clean
 all: pc
 build:
 	mkdir -p build
@@ -31,10 +31,13 @@ build/test_scene: tests/test_scene.c $(GAME) $(ENGINE) $(HEADERS) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_scene.c $(GAME) $(ENGINE)
 build/test_detail: tests/test_detail.c src/detail.c src/native_video.c src/detail.h src/native_video.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_detail.c src/detail.c src/native_video.c
-test: build/test_park build/test_scene build/test_detail host
+build/test_pointer: tests/test_pointer.c src/pointer.c src/pointer.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pointer.c src/pointer.c
+test: build/test_park build/test_scene build/test_detail build/test_pointer host
 	build/test_park
 	build/test_scene
 	build/test_detail
+	build/test_pointer
 	build/fair_host build/showcase.ppm
 build/test_park_68k: tests/test_park.c src/park.c src/park.h | build
 	$(CC_68K) -O2 -static -m68020-60 $(CPPFLAGS) -o $@ tests/test_park.c src/park.c
@@ -42,10 +45,17 @@ build/test_scene_68k: tests/test_scene.c $(GAME) $(ENGINE) $(HEADERS) | build
 	$(CC_68K) -O2 -static -m68020-60 $(CPPFLAGS) -Iami3d/src/amiga -o $@ tests/test_scene.c $(GAME) $(ENGINE) ami3d/src/amiga/render_68k.S ami3d/src/amiga/lmath_68k.S ami3d/src/amiga/lmath.c
 build/test_detail_68k: tests/test_detail.c src/detail.c src/native_video.c src/detail.h src/native_video.h | build
 	$(CC_68K) -O2 -static -m68020-60 $(CPPFLAGS) -o $@ tests/test_detail.c src/detail.c src/native_video.c
-test_68k: build/test_park_68k build/test_scene_68k build/test_detail_68k
+build/test_pointer_68k: tests/test_pointer.c src/pointer.c src/pointer.h | build
+	$(CC_68K) -O2 -static -m68020-60 $(CPPFLAGS) -o $@ tests/test_pointer.c src/pointer.c
+test_68k: build/test_park_68k build/test_scene_68k build/test_detail_68k build/test_pointer_68k
 	$(QEMU_68K) -cpu m68020 build/test_park_68k
 	$(QEMU_68K) -cpu m68020 build/test_scene_68k
 	$(QEMU_68K) -cpu m68020 build/test_detail_68k
+	$(QEMU_68K) -cpu m68020 build/test_pointer_68k
+build/bench_render_68k: tools/bench_render.c $(GAME) $(ENGINE) $(HEADERS) | build
+	$(CC_68K) -O2 -static -m68020-60 $(CPPFLAGS) -Iami3d/src/amiga -DBENCH_CACHE -o $@ tools/bench_render.c $(GAME) $(ENGINE) ami3d/src/amiga/render_68k.S ami3d/src/amiga/lmath_68k.S ami3d/src/amiga/lmath.c
+bench_68k: build/bench_render_68k
+	$(QEMU_68K) -cpu m68020 build/bench_render_68k
 amiga: build/AmiFunFair
 build/AmiFunFair.elf: $(GAME) $(ENGINE) $(AMIGA_SRC) $(HEADERS) | build
 	$(CC_68K) $(CPPFLAGS) $(AMIGA_FLAGS) -o $@ $(GAME) $(ENGINE) $(AMIGA_SRC) -lgcc

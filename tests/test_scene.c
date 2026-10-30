@@ -5,6 +5,7 @@
 #include <string.h>
 static Park p;
 static uint8_t chunky[MAX_SCREEN_W*MAX_SCREEN_H],planar[MAX_SCREEN_W/8*MAX_SCREEN_H*5];
+static uint8_t cache[MAX_SCREEN_W/8*MAX_SCREEN_H*5];
 int platform_init(void){return 0;}int platform_begin(struct surf *s){(void)s;return 0;}
 void platform_end(void){}void platform_shutdown(void){}void platform_input(Input *i){(void)i;}
 uint32_t platform_ms(void){return 0;}
@@ -15,15 +16,33 @@ static void render_compare(int mode){
  s.w=d->w;s.h=d->h;s.planes=planar;s.bpr=d->bpr;s.psize=d->plane_bytes;
  memset(chunky,0,sizeof(chunky));memset(planar,0,sizeof(planar));
  r_setup(chunky,d->w,d->h);scene_draw(&p,&c);ui_draw(&p,&c,&in);
+ scene_cache_bind(cache,sizeof(cache));
+ r_setup_planar(planar,d->bpr,d->plane_bytes,d->w,d->h,0);scene_draw(&p,&s);ui_draw(&p,&s,&in);
+ /* The second draw restores cached terrain. It must also erase the old UI. */
  r_setup_planar(planar,d->bpr,d->plane_bytes,d->w,d->h,0);scene_draw(&p,&s);ui_draw(&p,&s,&in);
  for(y=0;y<d->h;y++)for(x=0;x<d->w;x++){
   int v=0;for(b=0;b<5;b++)v|=((planar[b*s.psize+y*s.bpr+x/8]>>(7-(x&7)))&1)<<b;
   assert(chunky[y*d->w+x]==v);
  }
+ scene_cache_bind(0,0);
+}
+static void cache_invalidation(void){
+ static Park saved;static uint8_t expected[MAX_SCREEN_W*MAX_SCREEN_H];
+ struct surf s={0};int kind;s.buf=chunky;s.w=320;s.h=200;
+ park_demo(&p);saved=p;
+ for(kind=0;kind<6;kind++){
+  p=saved;
+  if(kind==0)p.camera_x+=100;if(kind==1)p.camera_yaw+=400;if(kind==2)p.camera_distance-=500;
+  if(kind==3)p.paths[23][5]=0;if(kind==4)p.reachable[23][5]=0;if(kind==5)p.camera_y-=130;
+  scene_cache_bind(0,0);r_setup(chunky,320,200);scene_draw(&p,&s);memcpy(expected,chunky,320*200);
+  {static Park changed;changed=p;p=saved;scene_cache_bind(cache,sizeof(cache));r_setup(chunky,320,200);scene_draw(&p,&s);p=changed;}
+  r_setup(chunky,320,200);scene_draw(&p,&s);assert(!memcmp(expected,chunky,320*200));
+ }
+ scene_cache_bind(0,0);
 }
 int main(void){
  int mode,i,t,r,x,y,sx,sy,checks=0;Input in={0};struct pvert v;
- park_demo(&p);for(mode=0;mode<DETAIL_COUNT;mode++)render_compare(mode);
+ cache_invalidation();park_demo(&p);for(mode=0;mode<DETAIL_COUNT;mode++)render_compare(mode);
  /* Every ride model draws identically through the PC chunky and Amiga planar paths. */
  for(t=0;t<ITEM_COUNT;t++)for(r=0;r<4;r++){
   park_init(&p,0);p.started=1;park_choose(&p,t);p.rotation=r;assert(park_place(&p,10,10));

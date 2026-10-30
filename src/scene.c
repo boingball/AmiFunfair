@@ -2,6 +2,7 @@
 #include "shape.h"
 #include "sort.h"
 #include "fixmath.h"
+#include <string.h>
 
 const uint32_t fair_palette[32]={
  0x84c5dc,0x172538,0x274257,0x47617a,0xf4f0d5,0xfad466,0xdda142,0x99632b,
@@ -39,6 +40,26 @@ static void cone(int x,int y,int r,int z,int h,int ramp){
 static void beam(int x0,int y0,int z0,int x1,int y1,int z1,int width,int col){
  int32_t p[12],a[3],b[3];int k;
  point(x0,y0,z0,a);point(x1,y1,z1,b);
+ /* Sub-pixel rails/supports do not need three world-space ribbon faces
+  * (12 vertex transforms). Project their endpoints once and fill one ribbon.
+  * Nearby thick beams and clipped beams retain the original geometry. */
+ {struct pvert u,v;int depth,rx,ry;
+  r_pvert(a[0],a[1],a[2],&u);r_pvert(b[0],b[1],b[2],&v);
+  depth=imin(u.c.z,v.c.z);
+  if(!u.code&&!v.code&&depth>NEAR_Z){
+   rx=width*V.fx*16/depth;ry=width*V.fy*16/depth;
+   if(rx<=16&&ry<=16){
+    int xs[4],ys[4],dx=v.sx-u.sx,dy=v.sy-u.sy,wx=0,wy=0;
+    if(iabs(dx)>=iabs(dy))wy=imax(4,ry);else wx=imax(4,rx);
+    xs[0]=u.sx-wx;ys[0]=u.sy-wy;xs[1]=u.sx+wx;ys[1]=u.sy+wy;
+    xs[2]=v.sx+wx;ys[2]=v.sy+wy;xs[3]=v.sx-wx;ys[3]=v.sy-wy;
+    if((wx&&dy>0)||(!wx&&dx<0)){
+     int t;for(k=0;k<2;k++){t=xs[k];xs[k]=xs[3-k];xs[3-k]=t;t=ys[k];ys[k]=ys[3-k];ys[3-k]=t;}
+    }
+    r_fill_poly2d(xs,ys,4,col);return;
+   }
+  }
+ }
  for(k=0;k<3;k++){
   int axis=k==2?0:k,other=k==0?1:2,j;
   for(j=0;j<4;j++){int32_t *o=p+j*3;const int32_t *src=j<2?a:b;
@@ -170,9 +191,15 @@ static void item_draw(void *arg){
  if(catalogue[a->type].group==RIDES)draw_ride(a);else draw_stand(a);
 }
 static void guest_draw(void *arg){
- int id=(int)(intptr_t)arg;Guest *g=&world->guests[id];int progress=imin(g->progress,8);
+ int id=(int)(intptr_t)arg;Guest *g=&world->guests[id];int progress=imin(g->progress,8),sx,sy,hx,hy;
  int x=(g->x*progress+g->nx*(8-progress))*8+32,y=(g->y*progress+g->ny*(8-progress))*8+32;
- sh_cyl(x,y,5,3,16,4,colours[g->colour],-1);sh_ball(x,y,23,6,6,R_YELLOW);
+ struct cvert feet,head;r_xform(x,y,1,&feet);r_xform(x,y,27,&head);
+ if(!r_project(&feet,&sx,&sy)||!r_project(&head,&hx,&hy))return;
+ {int height=imax(2,(sy-hy+15)/16),width=imax(1,height*V.fx/V.fy/3),xx=sx>>4,yy=hy>>4;
+  static const int shirts[6]={14,17,5,20,29,4};
+  r_rect(xx-width/2,yy+height/3,width,imax(1,height*2/3),shirts[g->colour]);
+  r_disc(hx,hy+(height/6)*16,imax(8,height*16*V.fx/V.fy/5),25);
+ }
 }
 static void tree_draw(void *arg){int id=(int)(intptr_t)arg;int x=(id%MAP)*64+32,y=(id/MAP)*64+32;
  sh_box(x-3,y-3,0,x+3,y+3,30,R_WOOD,R_WOOD);sh_cone(x,y,23,0,20,85,6,R_GRASS,-1);}
@@ -190,15 +217,41 @@ void scene_camera(const Park *p){
  r_camera(p->camera_x-(isin(p->camera_yaw)*horizontal>>14),
           p->camera_y-(icos(p->camera_yaw)*horizontal>>14),p->camera_distance,p->camera_yaw,600);
 }
-void scene_draw(Park *p,const struct surf *s){
- int x,y,i;world=p;surface=s;r_clear(0);scene_camera(p);
- {int32_t ground[12]={0,0,0,2048,0,0,2048,2048,0,0,2048,0};sh_flat(ground,4,11);}
- /* A sparse border leaves the grass clear and makes the buildable area legible. */
- for(x=0;x<MAP;x++){tile(x,0,1,9);tile(x,MAP-1,1,9);}
- for(y=1;y<MAP-1;y++){tile(0,y,1,9);tile(MAP-1,y,1,9);}
- for(y=1;y<MAP-1;y++)for(x=1;x<MAP-1;x++)if(p->paths[y][x]){
-  tile(x,y,1,p->reachable[y][x]?24:22);
+static uint8_t *ground_cache;
+static uint32_t ground_capacity;
+static uint8_t saved_paths[MAP][MAP],saved_reachable[MAP][MAP];
+static int cache_valid,cache_x,cache_y,cache_yaw,cache_distance,cache_w,cache_h,cache_planar,cache_bpr;
+void scene_cache_bind(void *memory,uint32_t bytes){ground_cache=memory;ground_capacity=bytes;cache_valid=0;}
+static void ground_rect(int x0,int y0,int x1,int y1,int z,int col){
+ int32_t v[12]={x0*64,y0*64,z,x1*64,y0*64,z,x1*64,y1*64,z,x0*64,y1*64,z};sh_flat(v,4,col);
+}
+static void draw_ground(Park *p,const struct surf *s){
+ uint32_t size=s->planes?(uint32_t)s->psize*5:(uint32_t)s->w*s->h;
+ uint8_t *dest=s->planes?s->planes:s->buf;int x,y;
+ int can_cache=ground_cache&&ground_capacity>=size;
+ if(can_cache&&cache_valid&&cache_w==s->w&&cache_h==s->h&&cache_bpr==s->bpr&&cache_planar==!!s->planes&&
+    cache_x==p->camera_x&&cache_y==p->camera_y&&cache_yaw==p->camera_yaw&&cache_distance==p->camera_distance&&
+    !memcmp(saved_paths,p->paths,sizeof(saved_paths))&&!memcmp(saved_reachable,p->reachable,sizeof(saved_reachable))){
+  memcpy(dest,ground_cache,size);return;
  }
+ r_clear(0);
+ ground_rect(0,0,MAP,MAP,0,11);
+ ground_rect(0,0,MAP,1,1,9);ground_rect(0,MAP-1,MAP,MAP,1,9);
+ ground_rect(0,1,1,MAP-1,1,9);ground_rect(MAP-1,1,MAP,MAP-1,1,9);
+ for(y=1;y<MAP-1;y++)for(x=1;x<MAP-1;){
+  if(p->paths[y][x]){int start=x,col=p->reachable[y][x]?24:22;
+   do{x++;}while(x<MAP-1&&p->paths[y][x]&&(p->reachable[y][x]?24:22)==col);
+   ground_rect(start,y,x,y+1,1,col);
+  }else x++;
+ }
+ if(can_cache){
+  memcpy(ground_cache,dest,size);memcpy(saved_paths,p->paths,sizeof(saved_paths));memcpy(saved_reachable,p->reachable,sizeof(saved_reachable));
+  cache_x=p->camera_x;cache_y=p->camera_y;cache_yaw=p->camera_yaw;cache_distance=p->camera_distance;
+  cache_w=s->w;cache_h=s->h;cache_bpr=s->bpr;cache_planar=!!s->planes;cache_valid=1;
+ }else cache_valid=0;
+}
+void scene_draw(Park *p,const struct surf *s){
+ int x,y,i;world=p;surface=s;scene_camera(p);draw_ground(p,s);
  /* Ground overlays are drawn before the structures. */
  if(p->selected>=0&&p->items[p->selected].used){Attraction *a=&p->items[p->selected];int w,h;
   park_dimensions(a->type,a->rotation,&w,&h);
@@ -212,11 +265,12 @@ void scene_draw(Park *p,const struct surf *s){
  r_sort_begin(10000);
  for(i=0;i<MAX_ITEMS;i++)if(p->items[i].used){Attraction *a=&p->items[i];int w,h;
   park_dimensions(a->type,a->rotation,&w,&h);
-  r_sort_add(sh_depth(a->x*64+w*32,a->y*64+h*32,0),item_draw,(void *)(intptr_t)i);
+  if(!r_box_hidden(a->x*64-32,a->y*64-32,w*64+64,h*64+64,0,240))
+   r_sort_add(sh_depth(a->x*64+w*32,a->y*64+h*32,0),item_draw,(void *)(intptr_t)i);
   if(a->ex>=0)r_sort_add(sh_depth(a->ex*64+32,a->ey*64+32,20),gate_draw,(void *)(intptr_t)(i*2));
   if(a->xx>=0)r_sort_add(sh_depth(a->xx*64+32,a->xy*64+32,20),gate_draw,(void *)(intptr_t)(i*2+1));
  }
- for(y=1;y<MAP-1;y++)for(x=1;x<MAP-1;x++)if(p->trees[y][x])r_sort_add(sh_depth(x*64+32,y*64+32,30),tree_draw,(void *)(intptr_t)(y*MAP+x));
+ for(y=1;y<MAP-1;y++)for(x=1;x<MAP-1;x++)if(p->trees[y][x]&&!r_box_hidden(x*64,y*64,64,64,0,90))r_sort_add(sh_depth(x*64+32,y*64+32,30),tree_draw,(void *)(intptr_t)(y*MAP+x));
  for(i=0;i<MAX_GUESTS;i++)if(p->guests[i].used&&!p->guests[i].riding){Guest *g=&p->guests[i];r_sort_add(sh_depth(g->x*64+32,g->y*64+32,12),guest_draw,(void *)(intptr_t)i);}
  r_sort_add(sh_depth(GATE_X*64+32,GATE_Y*64+32,60),entrance_draw,0);r_sort_draw();
  r_window_off();

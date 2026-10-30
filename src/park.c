@@ -147,7 +147,8 @@ void park_connect(Park *p){
   * Guests follow these fields without a path search every frame. */
  for(i=0;i<=MAX_ITEMS;i++){
   Attraction *a=i<MAX_ITEMS?&p->items[i]:0;
-  uint16_t (*dist)[MAP]=p->routes[i];memset(dist,255,MAP*MAP*sizeof(uint16_t));
+  uint16_t (*dist)[MAP]=p->routes[i];if(a&&!a->used)continue;
+  memset(dist,255,MAP*MAP*sizeof(uint16_t));
   if(a&&(!a->used||!a->connected))continue;
   head=tail=0;
   if(!a){dist[GATE_Y][GATE_X]=0;queue[tail++]=GATE_Y*MAP+GATE_X;}

@@ -3,6 +3,6 @@
 #include <stdint.h>
 #define FAIR_COPPER_WORDS 512
 /* Returns words written. One list per frame buffer and interlace field. */
-int fair_native_copper(uint16_t *out,uint32_t planes,uint32_t null_sprite,
+int fair_native_copper(uint16_t *out,uint32_t planes,uint32_t null_sprite,uint32_t pointer,
                       int detail,int field,int aga,const uint32_t *palette);
 #endif

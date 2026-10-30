@@ -1,5 +1,6 @@
 #include "game.h"
 #include "fixmath.h"
+#include "render.h"
 extern const uint8_t font8[64][8];
 /* UI/input use a stable 320x200 logical layout in every native mode. */
 static void ui_rect(const struct surf *s,int x,int y,int w,int h,int col){
@@ -18,9 +19,23 @@ static void cycle_detail(Park *p){
 
 static int hit(int x,int y,int bx,int by,int w,int h){return x>=bx&&x<bx+w&&y>=by&&y<by+h;}
 void ui_text(const struct surf *s,int x,int y,const char *str,int colour){
- int c,row,b;while(*str){c=(unsigned char)*str++;if(c>='a'&&c<='z')c-=32;
-  if(c>=32&&c<=95)for(row=0;row<7;row++)for(b=0;b<6;b++)if(font8[c-32][row]&(128>>b))ui_pixel(s,x+b,y+row,colour);
-  x+=6;
+ int c,row,b,sx=s->w/SCREEN_W,sy=s->h/SCREEN_H;
+ while(*str){c=(unsigned char)*str++;if(c>='a'&&c<='z')c-=32;
+  if(c>=32&&c<=95){
+   int px=x*sx,py=y*sy;
+   if(s->planes&&px>=0&&py>=0&&px+6*sx<=s->w&&py+7*sy<=s->h){
+    uint16_t masks[28];int nw=((px&15)+6*sx+15)/16,k=0,yy;
+    for(row=0;row<7;row++){
+     uint32_t bits=0;
+     for(b=0;b<6;b++)if(font8[c-32][row]&(128>>b))bits|=((1u<<sx)-1)<<(32-(b+1)*sx);
+     bits>>=px&15;
+     for(yy=0;yy<sy;yy++){masks[k++]=(uint16_t)(bits>>16);if(nw==2)masks[k++]=(uint16_t)bits;}
+    }
+    planar_words(s->planes+py*s->bpr+(px>>4)*2,s->bpr,s->psize,masks,7*sy,nw,s->pens?s->pens[colour]:colour);
+   }else{
+    for(row=0;row<7;row++)for(b=0;b<6;b++)if(font8[c-32][row]&(128>>b))ui_pixel(s,x+b,y+row,colour);
+   }
+  }x+=6;
  }
 }
 static void labelnum(const struct surf *s,int x,int y,const char *name,int v,int col){
@@ -116,8 +131,10 @@ void ui_draw(Park *p,const struct surf *s,const Input *in){
   ui_text(s,52,166,"CLICK OR H TO RETURN TO PARK",5);
  }
  /* Software pointer is shared by SDL and the Amiga hardware platform. */
+ if(!fair_hardware_pointer){
  for(i=0;i<9;i++){ui_pixel(s,in->mx,in->my+i,1);ui_pixel(s,in->mx+i/2,in->my+i,1);}
  for(i=0;i<7;i++)ui_pixel(s,in->mx+1,in->my+i,31);
+ }
 }
 static void inspect_click(Park *p,int x,int y){
  Attraction *a=p->selected>=0?&p->items[p->selected]:0;

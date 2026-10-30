@@ -12,6 +12,7 @@ enum { KEY_NONE,KEY_ESC,KEY_ROTATE,KEY_BACKROTATE,KEY_LEFT,KEY_RIGHT,KEY_UP,KEY_
 typedef struct {int mx,my,left,right,held,key,wheel,quit;} Input;
 extern const uint32_t fair_palette[32];
 void scene_camera(const Park *p);
+void scene_cache_bind(void *memory,uint32_t bytes);
 void scene_draw(Park *p,const struct surf *s);
 int scene_pick(const Park *p,int mx,int my,int *x,int *y);
 void ui_draw(Park *p,const struct surf *s,const Input *in);

@@ -5,6 +5,7 @@ const FairDetail fair_modes[DETAIL_COUNT]={
     {640,400,80,32000,160000,"HI-LACE"}
 };
 int fair_detail=DETAIL_NORMAL,fair_requested_detail=DETAIL_NORMAL;
+int fair_hardware_pointer;
 unsigned fair_detail_mask=(1u<<DETAIL_COUNT)-1;
 int fair_request_detail(int d)
 {

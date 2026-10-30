@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Independent simulation and placement tests
-        run: make build/test_park build/test_detail && build/test_park && build/test_detail
+        run: make build/test_park build/test_detail build/test_pointer && build/test_park && build/test_detail && build/test_pointer
   full-build:
     runs-on: ubuntu-latest
     env:

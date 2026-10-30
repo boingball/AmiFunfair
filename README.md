@@ -39,6 +39,32 @@ paths have been tested under qemu-m68k; the AmigaOS screen takeover, keyboard,
 mouse and exit restoration still need testing in WinUAE and on real hardware.
 There is no measured real-Amiga frame-rate claim yet.
 
+## 68020 responsiveness and performance
+
+The native pointer is a hardware sprite sampled and positioned every PAL/NTSC
+vertical blank. Mouse movement counters are read at 50/60 Hz, independent of
+park rendering; this prevents the wraparound/reversed movement that occurred
+when the old version sampled once per slow frame. Click edges retain the
+position at which the button was pressed. Keyboard events are sampled in the
+same interrupt and queued for the game. The hardware pointer keeps its physical
+size in all detail modes and uses a separate AGA palette bank.
+
+With available Fast RAM, static terrain/path pixels are cached until the camera,
+layout, connectivity or resolution changes. Adjacent path tiles are combined,
+planar text is drawn in masked glyph batches, distant thin beams use one
+projected ribbon, and guests use small screen-facing figures. Off-screen rides
+are culled before building their models. Route updates no longer clear unused
+attraction distance maps. If a terrain cache cannot be allocated, rendering still
+works normally.
+
+A controlled 100-frame Normal planar scene+UI benchmark under qemu-m68k
+(`-cpu m68020`) took 0.302 s before and 0.114 s after these changes. This is a
+render-code comparison, **not** a real-Amiga FPS measurement: it excludes screen
+presentation, interrupts and chipset contention, and qemu is not cycle accurate.
+Run the current comparison loop with `make bench_68k`.
+For a 14 MHz 68020, start with **Normal**. Hires doubles the pixel count and
+Hires Laced quadruples it; they remain options for faster CPUs.
+
 ## Build a fair
 
 1. Open **Rides** or **Stands** in the bottom bar. The arrows page through the
@@ -150,6 +176,9 @@ Full rendering tests compare all 21 models at all four rotations in all three
 detail modes, pixel for pixel between chunky and five-plane rendering. They also exercise ground
 picking at multiple camera angles, the menus, rotated footprints, gate
 validation, refunds, path connectivity, visitors, prices, staff and upkeep.
+Pointer tests cover counter wraparound during stalled rendering, queued click
+positions, event overflow and sprite coordinates. Terrain-cache invalidation and
+font output are compared against uncached/chunky rendering.
 Copper tests reconstruct every displayed plane row from both fields, and check
 triple-buffer ownership and mode transitions. SDL tests recreate the textures
 while cycling detail and check the D key.
@@ -166,7 +195,8 @@ artifacts. Its only upload is the game executable, ADF and test render.
 * `src/scene.c`: fixed-point Ami3D models, animation, camera and ground picking.
 * `src/ui.c`: bottom menus, difficulty screen, inspectors and mouse interaction.
 * `src/detail.c` / `detail.h`: detail modes and field/buffer ownership.
-* `src/native_video.c`: testable native Copper lists for all display modes.
+* `src/native_video.c`: testable native Copper lists and pointer palette.
+* `src/pointer.c`: VBlank mouse/event queue and hardware sprite data.
 * `src/platform_amiga.c`: planar display, native input, AGA detail selection.
 * `src/vblank_68k.S`: VBlank field switching and vector-base glue.
 * `src/platform_sdl.c`: interactive PC frontend using the same game/render code.
