@@ -181,11 +181,11 @@ static void gate_draw(void *arg){int id=(int)(intptr_t)arg;Attraction *a=&world-
 static void entrance_draw(void *unused){int x=GATE_X*64+32,y=GATE_Y*64+32;(void)unused;
  sh_box(x-75,y-20,0,x-45,y+20,110,R_RED,R_YELLOW);sh_box(x+45,y-20,0,x+75,y+20,110,R_BLUE,R_YELLOW);
  sh_box(x-80,y-23,100,x+80,y+23,133,R_RED,R_YELLOW);
- {struct pvert p;r_pvert(x,y,115,&p);if(!(p.code&1))ui_text(surface,(p.sx>>4)-24,p.sy>>4,"FUN FAIR",5);}
+ {struct pvert p;r_pvert(x,y,115,&p);if(!(p.code&1))ui_text(surface,(p.sx>>4)*SCREEN_W/V.w-24,(p.sy>>4)*SCREEN_H/V.h,"FUN FAIR",5);}
 }
 void scene_camera(const Park *p){
  int horizontal=p->camera_distance*3/4;
- r_window(0,VIEW_TOP,SCREEN_W,VIEW_BOTTOM);
+ r_window(0,VIEW_TOP*V.h/SCREEN_H,V.w,VIEW_BOTTOM*V.h/SCREEN_H);
  r_zoom(200);
  r_camera(p->camera_x-(isin(p->camera_yaw)*horizontal>>14),
           p->camera_y-(icos(p->camera_yaw)*horizontal>>14),p->camera_distance,p->camera_yaw,600);
@@ -226,6 +226,7 @@ int scene_pick(const Park *p,int mx,int my,int *x,int *y){
  int rx,ry,rz,dx,dy,dz,t;
  if(mx<0||mx>=SCREEN_W||my<VIEW_TOP||my>=VIEW_BOTTOM)return 0;
  scene_camera(p);
+ mx=mx*V.w/SCREEN_W;my=my*V.h/SCREEN_H;
  rx=(mx-V.cx)*16384/V.fx;ry=(V.cy-my)*16384/V.fy;
  rz=16384;dx=rx;dy=(ry*V.spit+rz*V.cpit)>>14;dz=(ry*V.cpit-rz*V.spit)>>14;
  if(dz>=-100)return 0;t=(-V.camz*1024)/dz;

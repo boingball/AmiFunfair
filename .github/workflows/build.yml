@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Independent simulation and placement tests
-        run: make build/test_park && build/test_park
+        run: make build/test_park build/test_detail && build/test_park && build/test_detail
   full-build:
     runs-on: ubuntu-latest
     env:
@@ -39,7 +39,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev gcc-m68k-linux-gnu qemu-user
       - name: Check PC, 68k renderer and bootable Amiga build
         if: steps.engine.outputs.enabled == 'true'
-        run: make test pc test_68k adf
+        run: make test pc test_pc test_68k adf
       - uses: actions/upload-artifact@v4
         if: steps.engine.outputs.enabled == 'true'
         with:

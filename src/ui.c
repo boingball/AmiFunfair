@@ -1,10 +1,25 @@
 #include "game.h"
 #include "fixmath.h"
 extern const uint8_t font8[64][8];
+/* UI/input use a stable 320x200 logical layout in every native mode. */
+static void ui_rect(const struct surf *s,int x,int y,int w,int h,int col){
+ int sx=s->w/SCREEN_W,sy=s->h/SCREEN_H;surf_rect(s,x*sx,y*sy,w*sx,h*sy,col);
+}
+static void ui_frame(const struct surf *s,int x,int y,int w,int h,int col){
+ ui_rect(s,x,y,w,1,col);ui_rect(s,x,y+h-1,w,1,col);
+ ui_rect(s,x,y,1,h,col);ui_rect(s,x+w-1,y,1,h,col);
+}
+static void ui_pixel(const struct surf *s,int x,int y,int col){ui_rect(s,x,y,1,1,col);}
+static void cycle_detail(Park *p){
+ int mode=fair_cycle_detail();
+ if(fair_detail_mask==1)park_message(p,"Normal only: hires needs AGA and enough chip RAM.");
+ else park_message(p,mode==DETAIL_NORMAL?"Detail: NORMAL 320x200.":mode==DETAIL_HIRES?"Detail: HIRES 640x200.":"Detail: HIRES LACED 640x400.");
+}
+
 static int hit(int x,int y,int bx,int by,int w,int h){return x>=bx&&x<bx+w&&y>=by&&y<by+h;}
 void ui_text(const struct surf *s,int x,int y,const char *str,int colour){
  int c,row,b;while(*str){c=(unsigned char)*str++;if(c>='a'&&c<='z')c-=32;
-  if(c>=32&&c<=95)for(row=0;row<7;row++)for(b=0;b<6;b++)if(font8[c-32][row]&(128>>b))surf_pixel(s,x+b,y+row,colour);
+  if(c>=32&&c<=95)for(row=0;row<7;row++)for(b=0;b<6;b++)if(font8[c-32][row]&(128>>b))ui_pixel(s,x+b,y+row,colour);
   x+=6;
  }
 }
@@ -12,10 +27,10 @@ static void labelnum(const struct surf *s,int x,int y,const char *name,int v,int
  char b[60];char *e=str_cat(b,name);str_num(e,v);ui_text(s,x,y,b,col);
 }
 static void panel(const struct surf *s,int x,int y,int w,int h){
- surf_rect(s,x,y,w,h,1);surf_frame(s,x,y,w,h,3);surf_rect(s,x+1,y+1,w-2,1,18);
+ ui_rect(s,x,y,w,h,1);ui_frame(s,x,y,w,h,3);ui_rect(s,x+1,y+1,w-2,1,18);
 }
 static void button(const struct surf *s,int x,int y,int w,int h,const char *name,int on,int disabled){
- surf_rect(s,x,y,w,h,on?28:2);surf_frame(s,x,y,w,h,on?18:3);
+ ui_rect(s,x,y,w,h,on?28:2);ui_frame(s,x,y,w,h,on?18:3);
  ui_text(s,x+(w-str_len(name)*6)/2,y+(h-6)/2,name,disabled?22:on?5:4);
 }
 static void brief(const struct surf *s,int x,int y,const char *name,int max,int col){
@@ -45,11 +60,11 @@ static void inspect_draw(Park *p,const struct surf *s){
 }
 void ui_draw(Park *p,const struct surf *s,const Input *in){
  int i;char b[100];
- surf_rect(s,0,0,320,14,1);labelnum(s,4,4,"CASH ",p->cash,p->cash<0?14:5);
+ ui_rect(s,0,0,320,14,1);labelnum(s,4,4,"CASH ",p->cash,p->cash<0?14:5);
  labelnum(s,125,4,"GUESTS ",park_active(p),4);labelnum(s,220,4,"DAY ",p->day,4);
  if(p->paused)ui_text(s,274,4,"PAUSED",14);
  if(inspector(p)&&p->started)inspect_draw(p,s);
- surf_rect(s,0,137,320,15,1);
+ ui_rect(s,0,137,320,15,1);
  brief(s,4,138,p->message,52,4);if(str_len(p->message)>52)brief(s,4,145,p->message+52,52,23);
  panel(s,0,152,320,34);
  if(p->category==RIDES||p->category==STANDS){
@@ -58,7 +73,7 @@ void ui_draw(Park *p,const struct surf *s,const Input *in){
   if(p->page*3>=n)p->page=0;
   button(s,1,155,12,27,"<",0,0);button(s,307,155,12,27,">",0,0);
   for(i=0;i<3&&p->page*3+i<n;i++){int t=list[p->page*3+i],x=16+i*97,disabled=p->cash<catalogue[t].cost;
-   surf_rect(s,x,155,94,27,p->buy_type==t?28:2);surf_frame(s,x,155,94,27,disabled?22:3);
+   ui_rect(s,x,155,94,27,p->buy_type==t?28:2);ui_frame(s,x,155,94,27,disabled?22:3);
    brief(s,x+3,158,catalogue[t].name,15,disabled?22:4);
    labelnum(s,x+3,170,"",catalogue[t].cost,disabled?22:5);
    b[0]=(char)('0'+catalogue[t].w);b[1]='X';b[2]=(char)('0'+catalogue[t].h);b[3]=0;ui_text(s,x+68,170,b,18);
@@ -73,7 +88,7 @@ void ui_draw(Park *p,const struct surf *s,const Input *in){
   labelnum(s,7,157,"ENTRY ",p->ticket,5);button(s,73,155,18,13,"-",0,0);button(s,94,155,18,13,"+",0,0);
   button(s,118,155,69,13,p->park_open?"PARK OPEN":"CLOSED",p->park_open,0);
   button(s,193,155,57,13,p->paused?"RESUME":"PAUSE",p->paused,0);button(s,256,155,59,13,"NEW PARK",0,0);
-  labelnum(s,7,175,"TOTAL INCOME ",p->earned,4);labelnum(s,185,175,"ARRIVALS ",p->arrivals,18);
+  labelnum(s,7,175,"TOTAL INCOME ",p->earned,4);str_cat(str_cat(b,"DETAIL "),fair_modes[fair_detail].name);button(s,181,171,134,12,b,0,0);
  }
  button(s,0,186,56,14,"RIDES",p->category==RIDES,0);button(s,56,186,56,14,"STANDS",p->category==STANDS,0);
  button(s,112,186,56,14,"STAFF",p->category==STAFF,0);button(s,168,186,56,14,"PATHS",p->category==LANDSCAPE,0);
@@ -95,14 +110,14 @@ void ui_draw(Park *p,const struct surf *s,const Input *in){
   ui_text(s,18,91,"CLICK RIDES TO SET PRICE/COLOUR/SPEED.",18);
   ui_text(s,18,103,"ARROWS PAN. Q/E ORBIT. +/- OR WHEEL ZOOM.",4);
   ui_text(s,18,115,"DRAG TO PAINT PATHS. RMB/ESC CANCEL.",4);
-  ui_text(s,18,127,"SPACE PAUSES. H HELP. F10 QUITS.",4);
+  ui_text(s,18,127,"SPACE PAUSE. D DETAIL. F10 QUITS.",4);
   ui_text(s,18,139,"STAFF: 500 HIRE; 250/350 DAILY WAGES.",23);
   ui_text(s,18,151,"RIDES WEAR OUT. MECHANICS REPAIR THEM.",23);
   ui_text(s,52,166,"CLICK OR H TO RETURN TO PARK",5);
  }
  /* Software pointer is shared by SDL and the Amiga hardware platform. */
- for(i=0;i<9;i++){surf_pixel(s,in->mx,in->my+i,1);surf_pixel(s,in->mx+i/2,in->my+i,1);}
- for(i=0;i<7;i++)surf_pixel(s,in->mx+1,in->my+i,31);
+ for(i=0;i<9;i++){ui_pixel(s,in->mx,in->my+i,1);ui_pixel(s,in->mx+i/2,in->my+i,1);}
+ for(i=0;i<7;i++)ui_pixel(s,in->mx+1,in->my+i,31);
 }
 static void inspect_click(Park *p,int x,int y){
  Attraction *a=p->selected>=0?&p->items[p->selected]:0;
@@ -121,7 +136,8 @@ static void inspect_click(Park *p,int x,int y){
  }
 }
 void game_input(Park *p,const Input *in){
- int x,y;if(in->key==KEY_HELP){p->show_help=!p->show_help;return;}
+ int x,y;if(in->key==KEY_DETAIL){cycle_detail(p);return;}
+ if(in->key==KEY_HELP){p->show_help=!p->show_help;return;}
  if(p->show_help){if(in->left||in->key==KEY_ESC)p->show_help=0;return;}
  if(!p->started){
   if(in->left&&in->my>=94&&in->my<125&&in->mx>=26&&in->mx<294){
@@ -165,6 +181,7 @@ void game_input(Park *p,const Input *in){
  else if(p->category==LANDSCAPE){park_cancel(p);p->selected=-1;p->tool=x<107?PATH:x<212?TREE:ERASE;
   park_message(p,p->tool==PATH?"Drag paths to connect rides and stands to the gate.":p->tool==TREE?"Plant trees for 50 each.":"Click to sell a ride or remove a path/tree.");
  }else{
+  if(hit(x,y,181,171,134,12))cycle_detail(p);
   if(hit(x,y,73,155,18,13)&&p->ticket)p->ticket--;
   if(hit(x,y,94,155,18,13)&&p->ticket<100)p->ticket++;
   if(hit(x,y,118,155,69,13))p->park_open=!p->park_open;

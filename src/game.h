@@ -2,12 +2,13 @@
 #define GAME_H
 #include "park.h"
 #include "text.h"
+#include "detail.h"
 #define SCREEN_W 320
 #define SCREEN_H 200
 #define VIEW_TOP 14
 #define VIEW_BOTTOM 137
 enum { KEY_NONE,KEY_ESC,KEY_ROTATE,KEY_BACKROTATE,KEY_LEFT,KEY_RIGHT,KEY_UP,KEY_DOWN,
- KEY_ORBIT_L,KEY_ORBIT_R,KEY_ZOOM_IN,KEY_ZOOM_OUT,KEY_PAUSE,KEY_HELP,KEY_QUIT,KEY_TAB };
+ KEY_ORBIT_L,KEY_ORBIT_R,KEY_ZOOM_IN,KEY_ZOOM_OUT,KEY_PAUSE,KEY_HELP,KEY_QUIT,KEY_TAB,KEY_DETAIL };
 typedef struct {int mx,my,left,right,held,key,wheel,quit;} Input;
 extern const uint32_t fair_palette[32];
 void scene_camera(const Park *p);

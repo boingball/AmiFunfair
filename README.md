@@ -11,10 +11,28 @@ Shell. Choose Easy, Medium or Hard, or **Play Showcase Park** for a populated
 example. Starting money is exactly **500,000 / 250,000 / 100,000**.
 
 Target: **68020 or better**, ECS/AGA, mouse, roughly 1 MB available memory.
-A **68030 with Fast RAM** is the intended first hardware test. The display is
-320x200, 32 colours, with a vertical window that fits both PAL and NTSC.
+A **68030 with Fast RAM** is the intended first hardware test. The game starts at 320x200 in 32 colours. **D** or **Park > Detail** cycles
+through the supported modes; the vertical window fits both PAL and NTSC.
 Fast RAM drawing is selected automatically when its allocation succeeds;
 otherwise the engine draws directly into chip RAM. No FPU is needed.
+
+| Detail | Render resolution | Native requirements |
+| --- | --- | --- |
+| Normal | 320x200 | ECS/AGA, about 125 KiB free chip RAM for display buffers |
+| Hires | 640x200 | AGA, about 245 KiB free chip RAM for display buffers |
+| Hires Laced | 640x400 | AGA, about 475 KiB free chip RAM for display buffers |
+
+These are display allocations in addition to the game/OS memory. At startup the
+platform reserves the largest supported buffers that fit, falling back to fewer
+choices if chip RAM is limited. Detail changes reuse those buffers and retain
+the park, camera and current build. Menus and mouse input keep their on-screen
+size while Ami3D renders the park at the selected resolution. SDL supports all
+three render sizes too.
+
+Interlace alternates even and odd image rows every vertical blank, including
+while a new frame is still rendering. A published picture stays immutable for
+both fields. The display changes mode only when the next complete picture is
+ready; no field wait can stall input or prevent cycling back to Normal.
 
 The executable and ADF are build-verified. Core gameplay and the 68k rendering
 paths have been tested under qemu-m68k; the AmigaOS screen takeover, keyboard,
@@ -61,6 +79,7 @@ seconds of simulation, and wages/upkeep are charged even if the park is closed.
 | Mouse wheel (PC) | Zoom |
 | Space | Pause / resume |
 | Tab | Cycle bottom categories |
+| D / Park > Detail | Cycle Normal / Hires / Hires Laced |
 | H / F1 | Handbook |
 | F10 | Quit and restore the desktop |
 
@@ -118,6 +137,8 @@ make adf
 make test
 # Optional native 68k C/assembler checks, with qemu-user and cross libc:
 make test_68k
+# Optional interactive frontend switching test (dummy SDL display):
+make test_pc
 ```
 
 On Ubuntu, the build packages are `build-essential`, `libsdl2-dev`,
@@ -125,10 +146,13 @@ On Ubuntu, the build packages are `build-essential`, `libsdl2-dev`,
 Override `CC_68K`, `QEMU_68K`, `SDL_CFLAGS` or `SDL_LIBS` when needed.
 
 `make build/test_park && build/test_park` works without fetching Ami3D.
-Full rendering tests compare all 21 models at all four rotations pixel for
-pixel between chunky and five-plane rendering. They also exercise ground
+Full rendering tests compare all 21 models at all four rotations in all three
+detail modes, pixel for pixel between chunky and five-plane rendering. They also exercise ground
 picking at multiple camera angles, the menus, rotated footprints, gate
 validation, refunds, path connectivity, visitors, prices, staff and upkeep.
+Copper tests reconstruct every displayed plane row from both fields, and check
+triple-buffer ownership and mode transitions. SDL tests recreate the textures
+while cycling detail and check the D key.
 
 GitHub Actions always runs the independent park tests. For full PC, 68k and ADF
 builds, set the repository Actions secret **AMI3D_READ_TOKEN** to a token with
@@ -141,7 +165,10 @@ artifacts. Its only upload is the game executable, ADF and test render.
 * `src/park.c` / `park.h`: platform-independent simulation and placement rules.
 * `src/scene.c`: fixed-point Ami3D models, animation, camera and ground picking.
 * `src/ui.c`: bottom menus, difficulty screen, inspectors and mouse interaction.
-* `src/platform_amiga.c`: planar display, PAL/NTSC-safe window, native input.
+* `src/detail.c` / `detail.h`: detail modes and field/buffer ownership.
+* `src/native_video.c`: testable native Copper lists for all display modes.
+* `src/platform_amiga.c`: planar display, native input, AGA detail selection.
+* `src/vblank_68k.S`: VBlank field switching and vector-base glue.
 * `src/platform_sdl.c`: interactive PC frontend using the same game/render code.
 * `src/platform_host.c`: deterministic, display-free image generation.
 * `tests/`: gameplay, input and chunky/planar regression checks.

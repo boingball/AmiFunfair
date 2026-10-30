@@ -1,299 +1,133 @@
-/* AmiFunFair Amiga platform, adapted from Ami3D demo/amiga.c.
- * Five bitplanes, double buffered, 320x200 within PAL and NTSC display bounds.
- * Screen takeover/startup/restore glue remains shared with the pinned engine.
- * Fast RAM is used for drawing when available, then copied to the chip screen.
- */
+/* AmiFunFair native display. AGA hires and interlace use the same
+ * dispatcher/mailbox design as AmiPool: immutable, triple-buffered frames,
+ * with each laced frame held for a matched pair of fields. */
 #include "game.h"
 #include "render.h"
-#define DEMO_W SCREEN_W
-#define DEMO_H SCREEN_H
-#define DEMO_NAME "AmiFunFair"
-#define demo_palette fair_palette
-#define demo_sky(y) fair_palette[0]
 #include "hw.h"
-
-#define ROWB (DEMO_W / 8)
-#define PLANE ((u32)ROWB * DEMO_H)
-#define SCREEN (PLANE * 5)
-#define COP_WORDS 6000
-#define COP_LISTS 2
-#define COP_MEM (COP_WORDS * 2 * COP_LISTS + 64)   /* (the lists, the null sprite) */
-#define TOP 0x2c     /* 44..243 fits PAL and NTSC */
-
-static void *gfxbase, *old_view;
-static u32 old_cop;
-static u16 old_dmacon, old_intena, old_adkcon;
-static int taken, aga, shown;
-static void *screen_mem[2], *chip_mem;
-static u8 *fast;
-static u8 *screen[2];
-static u16 *cop[2][2];
+#include "native_video.h"
+#define NBUF 3
+#define COP_WORDS FAIR_COPPER_WORDS
+#define COP_MEM (NBUF*2*COP_WORDS*2+96)
+#define TOP 0x2c
+static void *gfxbase,*old_view;
+static u32 old_cop,old_lev3;
+static u16 old_dmacon,old_intena,old_adkcon;
+static int taken,aga,draw_buf,capacity;
+static u32 screen_bytes;
+static void *screen_mem[NBUF],*chip_mem;
+static u8 *screen[NBUF],*fast;
+static u16 *cop[NBUF][2];
 static u32 *null_sprite;
+static volatile u16 *dispatch;
+static volatile u32 *vbr;
+static volatile FairFrames frames={-1,-1};
+static volatile int buffer_detail[NBUF];
+volatile u32 fair_vbl_ticks;
+void *fair_get_vbr(void);
+void fair_lev3(void);
+void clear_fast_68k(void *p,uint32_t bytes);
 
-/* gcc may call these */
-void *memset(void *d, int c, unsigned long n)
-{
-    u8 *p = d;
-    while (n--) *p++ = (u8)c;
-    return d;
+void *memset(void *d,int c,unsigned long n){u8 *p=d;while(n--)*p++=(u8)c;return d;}
+void *memcpy(void *d,const void *s,unsigned long n){u8 *p=d;const u8 *q=s;while(n--)*p++=*q++;return d;}
+static void print(const char *s){long n=0;while(s[n])n++;os_print(s,n);}
+static u32 tod_b(void){u32 hi=CIAB_TODHI,mid=CIAB_TODMID,lo=CIAB_TODLO;return (hi<<16)|(mid<<8)|lo;}
+uint32_t plat_lines(void){static u32 last,high;u32 now=tod_b();if(now<last)high+=1UL<<24;last=now;return high+now;}
+static int vpos(void){return (int)((REGL(VPOSR)>>8)&0x1ff);}
+static void wait_blit(void){(void)REG(DMACONR);while(REG(DMACONR)&0x4000);}
+/* IRQ runs even while the CPU is drawing a slow hires frame. It never waits
+ * for a field or a blit and never changes a frame that is being rendered. */
+void fair_vblank(void){
+ int field,shown;
+ fair_vbl_ticks++;
+ if(vpos()>=24)return;
+ shown=frames.display;
+ field=fair_select(&frames,REG(VPOSR),shown>=0&&buffer_detail[shown]==DETAIL_LACE);
+ shown=frames.display;
+ if(shown>=0)fair_dispatch_target(dispatch,(u32)cop[shown][buffer_detail[shown]==DETAIL_LACE?field:0]);
 }
-
-void *memcpy(void *d, const void *s, unsigned long n)
-{
-    u8 *p = d;
-    const u8 *q = s;
-    while (n--) *p++ = *q++;
-    return d;
+void platform_shutdown(void){
+ int i;
+ if(taken){
+  wait_blit();REG(INTENA)=0x7fff;REG(DMACON)=0x7fff;REG(INTREQ)=0x7fff;
+  vbr[27]=old_lev3;os_cacheclear();
+  REGL(COP1LC)=old_cop;REG(COPJMP1)=0;
+  REG(ADKCON)=0x8000|old_adkcon;REG(DMACON)=0x8000|old_dmacon;REG(INTENA)=0x8000|old_intena;
+  gfx_loadview(gfxbase,old_view);gfx_waittof(gfxbase);gfx_waittof(gfxbase);
+  os_permit();gfx_disownblitter(gfxbase);taken=0;
+ }
+ if(fast)os_free(fast,screen_bytes);fast=0;
+ for(i=0;i<NBUF;i++){if(screen_mem[i])os_free(screen_mem[i],screen_bytes+8);screen_mem[i]=0;}
+ if(chip_mem)os_free(chip_mem,COP_MEM);chip_mem=0;
+ if(gfxbase)os_closelib(gfxbase);gfxbase=0;
 }
-
-static void print(const char *s)
-{
-    long n = 0;
-    while (s[n]) n++;
-    os_print(s, n);
+int platform_init(void){
+ int i,k;u8 *p;
+ gfxbase=os_openlib("graphics.library",33);if(!gfxbase){print("AmiFunFair: needs graphics.library v33\n");return 0;}
+ aga=(REG(0x07c)&255)==0xf8;vbr=fair_get_vbr();
+ chip_mem=os_alloc(COP_MEM,MEMF_CHIP|MEMF_CLEAR);
+ if(!chip_mem){print("AmiFunFair: no copper memory\n");platform_shutdown();return 0;}
+ /* Try the largest supported allocation before takeover; all detail changes
+  * then reuse the buffers, so a failed allocation cannot blank the game. */
+ for(capacity=aga?DETAIL_LACE:DETAIL_NORMAL;capacity>=DETAIL_NORMAL;capacity--){
+  screen_bytes=(u32)fair_modes[capacity].bytes;
+  for(i=0;i<NBUF;i++){
+   screen_mem[i]=os_alloc(screen_bytes+8,MEMF_CHIP|MEMF_CLEAR);
+   if(!screen_mem[i])break;
+   screen[i]=(u8 *)(((u32)screen_mem[i]+7)&~7UL);
+  }
+  if(i==NBUF)break;
+  for(k=0;k<i;k++){os_free(screen_mem[k],screen_bytes+8);screen_mem[k]=0;}
+ }
+ if(capacity<DETAIL_NORMAL){print("AmiFunFair: needs about 125K free chip RAM\n");platform_shutdown();return 0;}
+ fair_detail_mask=(1u<<(capacity+1))-1;
+ if(!(fair_detail_mask&(1u<<fair_requested_detail)))fair_requested_detail=DETAIL_NORMAL;
+ fair_detail=fair_requested_detail;
+ fast=os_alloc(screen_bytes,MEMF_FAST|MEMF_CLEAR);
+ p=(u8 *)(((u32)chip_mem+7)&~7UL);
+ for(i=0;i<NBUF;i++)for(k=0;k<2;k++){cop[i][k]=(u16 *)(p+(i*2+k)*COP_WORDS*2);}
+ dispatch=(volatile u16 *)(p+NBUF*2*COP_WORDS*2);null_sprite=(u32 *)(p+NBUF*2*COP_WORDS*2+32);
+ for(i=0;i<NBUF;i++){
+  buffer_detail[i]=fair_detail;fair_native_copper(cop[i][0],(u32)screen[i],(u32)null_sprite,fair_detail,0,aga,fair_palette);fair_native_copper(cop[i][1],(u32)screen[i],(u32)null_sprite,fair_detail,1,aga,fair_palette);
+ }
+ draw_buf=0;frames.display=1;frames.pending=-1;fair_dispatch_init(dispatch,(u32)cop[1][0]);
+ old_view=*(void **)((u8 *)gfxbase+34);old_cop=*(u32 *)((u8 *)gfxbase+38);
+ gfx_loadview(gfxbase,0);gfx_waittof(gfxbase);gfx_waittof(gfxbase);gfx_ownblitter(gfxbase);os_forbid();
+ old_dmacon=REG(DMACONR);old_intena=REG(INTENAR);old_adkcon=REG(ADKCONR);
+ REG(INTENA)=0x7fff;REG(INTREQ)=0x7fff;REG(DMACON)=0x7fff;REG(POTGO)=0xff00;
+ old_lev3=vbr[27];vbr[27]=(u32)fair_lev3;os_cacheclear();taken=1;
+ REGL(COP1LC)=(u32)dispatch;REG(COPJMP1)=0;
+ REG(DMACON)=DMAF_SETCLR|DMAF_DMAEN|DMAF_BPLEN|DMAF_COPEN|DMAF_BLTEN|DMAF_SPREN;
+ REG(INTENA)=0xc020;return 1;
 }
-
-/* ---- time ---- */
-
-static u32 tod_b(void)
-{
-    u32 hi = CIAB_TODHI;   /* reading hi latches the counter */
-    u32 mid = CIAB_TODMID;
-    u32 lo = CIAB_TODLO;   /* reading lo releases the latch */
-    return (hi << 16) | (mid << 8) | lo;
+static void clear_display(void){
+ const FairDetail *d=&fair_modes[fair_detail];
+ if(fast)clear_fast_68k(fast,(u32)d->bytes);
+ else{
+  int rows=d->h*5;u8 *dest=screen[draw_buf];
+  wait_blit();REG(BLTCON0)=0x0100;REG(BLTCON1)=0;REG(BLTDMOD)=0;
+  /* BLTSIZE is at most 1023 rows: a 400-line five-plane screen needs chunks. */
+  while(rows){int n=rows>1000?1000:rows;REGL(BLTDPT)=(u32)dest;REG(BLTSIZE)=(u16)((n<<6)|(d->bpr/2));wait_blit();dest+=n*d->bpr;rows-=n;}
+ }
 }
-
-/* CIA-B's time of day counts horizontal syncs: raster lines, 24 bits,
- * carried on past the wrap. */
-uint32_t plat_lines(void)
-{
-    static u32 last, high;
-    u32 now = tod_b();
-    if (now < last) high += 1UL << 24;
-    last = now;
-    return high + now;
+int platform_begin(struct surf *s){
+ const FairDetail *d;
+ if(fair_detail_mask&(1u<<fair_requested_detail))fair_detail=fair_requested_detail;
+ d=&fair_modes[fair_detail];
+ r_setup_planar(fast?fast:screen[draw_buf],d->bpr,d->plane_bytes,d->w,d->h,clear_display);
+ s->buf=0;s->w=d->w;s->h=d->h;s->planes=fast?fast:screen[draw_buf];s->bpr=d->bpr;s->psize=d->plane_bytes;s->pens=0;
+ return 1;
 }
-
-static int vpos(void) { return (int)((REGL(VPOSR) >> 8) & 0x1ff); }
-
-static void wait_line(void)
-{
-    int v = vpos();
-    while (vpos() == v) ;
+void platform_end(void){
+ const FairDetail *d=&fair_modes[fair_detail];
+ if(fast){const u32 *src=(const u32 *)fast;u32 *dst=(u32 *)screen[draw_buf],n=(u32)d->bytes/16;
+  while(n--){dst[0]=src[0];dst[1]=src[1];dst[2]=src[2];dst[3]=src[3];src+=4;dst+=4;}
+ }
+ fair_native_copper(cop[draw_buf][0],(u32)screen[draw_buf],(u32)null_sprite,fair_detail,0,aga,fair_palette);
+ fair_native_copper(cop[draw_buf][1],(u32)screen[draw_buf],(u32)null_sprite,fair_detail,1,aga,fair_palette);
+ /* Metadata is committed before publishing the buffer to the IRQ. */
+ REG(INTENA)=0x0020;buffer_detail[draw_buf]=fair_detail;
+ draw_buf=fair_publish(&frames,draw_buf);REG(INTENA)=0x8020;
 }
-
-static void wait_blit(void)
-{
-    (void)REG(DMACONR);                  /* early Agnus: the first read lies */
-    while (REG(DMACONR) & 0x4000) ;      /* BBUSY */
-}
-
-/* ---- the display ---- */
-
-static inline u16 hi12(u32 c)
-{
-    return (u16)(((c >> 12) & 0xf00) | ((c >> 8) & 0x0f0) | ((c >> 4) & 0x00f));
-}
-
-static inline u16 lo12(u32 c)
-{
-    return (u16)(((c >> 8) & 0xf00) | ((c >> 4) & 0x0f0) | (c & 0x00f));
-}
-
-#define MOVE(r, v) do { *c++ = (u16)(r); *c++ = (u16)(v); } while (0)
-#define WAIT(y) do { *c++ = (u16)((((y) & 255) << 8) | 0x07); *c++ = 0xfffe; } while (0)
-
-/* A colour register: AGA's 24 bits as two halves (LOCT), OCS's 12. */
-static u16 *colour(u16 *c, int reg, u32 rgb)
-{
-    if (aga) {
-        MOVE(BPLCON3, 0x0c00);
-        MOVE(reg, hi12(rgb));
-        MOVE(BPLCON3, 0x0e00);
-        MOVE(reg, lo12(rgb));
-    } else {
-        MOVE(reg, hi12(rgb));
-    }
-    return c;
-}
-
-/* half: each line shown twice (the modulos -ROWB on the first of each
- * pair, 0 on the second) */
-static void build_copper(u16 *c, const u8 *planes, int half)
-{
-    int i, wrapped = 0;
-    u32 ns = (u32)null_sprite;
-    MOVE(FMODE, aga ? 3 : 0);           /* AGA: 64-bit fetch, more bus for the CPU */
-    MOVE(BPLCON0, 0x5200);
-    MOVE(BPLCON1, 0);
-    MOVE(BPLCON2, 0x0024);
-    MOVE(BPLCON3, 0x0c00);
-    MOVE(BPLCON4, 0x0011);
-    MOVE(DIWSTRT, (TOP << 8) | 0x81);
-    MOVE(DIWSTOP, ((TOP + DEMO_H) & 255) << 8 | 0xc1);
-    MOVE(DDFSTRT, 0x0038);
-    MOVE(DDFSTOP, aga ? 0x00b8 : 0x00d0);
-    MOVE(BPL1MOD, half ? -ROWB : 0);
-    MOVE(BPL2MOD, half ? -ROWB : 0);
-    for (i = 0; i < 8; i++) {
-        MOVE(SPR0PT + i * 4, ns >> 16);
-        MOVE(SPR0PT + i * 4 + 2, ns & 0xffff);
-    }
-    for (i = 1; i < 32; i++) c = colour(c, COLOR00 + i * 2, demo_palette[i]);
-    for (i = 0; i < 5; i++) {
-        u32 a = (u32)planes + i * PLANE;
-        MOVE(BPL1PT + i * 4, a >> 16);
-        MOVE(BPL1PT + i * 4 + 2, a & 0xffff);
-    }
-    c = colour(c, COLOR00, demo_sky(0));
-    for (i = 1; i <= DEMO_H; i++) {
-        int y = TOP + i;
-        if (y >= 256 && !wrapped) {
-            *c++ = 0xffdf;
-            *c++ = 0xfffe;
-            wrapped = 1;
-        }
-        WAIT(y);
-        if (half) {
-            MOVE(BPL1MOD, i & 1 ? 0 : -ROWB);
-            MOVE(BPL2MOD, i & 1 ? 0 : -ROWB);
-        }
-        c = colour(c, COLOR00, i < DEMO_H ? demo_sky(i) : 0);
-    }
-    *c++ = 0xffff;
-    *c++ = 0xfffe;
-}
-
-void platform_shutdown(void)
-{
-    if (taken) {
-        wait_blit();
-        REG(DMACON) = 0x7fff;
-        REG(INTENA) = 0x7fff;
-        REG(INTREQ) = 0x7fff;
-        REGL(COP1LC) = old_cop;
-        REG(COPJMP1) = 0;
-        REG(ADKCON) = 0x8000 | old_adkcon;
-        REG(DMACON) = 0x8000 | old_dmacon;
-        REG(INTENA) = 0x8000 | old_intena;
-        gfx_loadview(gfxbase, old_view);
-        gfx_waittof(gfxbase);
-        gfx_waittof(gfxbase);
-        os_permit();
-        gfx_disownblitter(gfxbase);
-        taken = 0;
-    }
-    if (fast) os_free(fast, SCREEN);
-    fast = 0;
-    if (screen_mem[0]) os_free(screen_mem[0], SCREEN + 8);
-    if (screen_mem[1]) os_free(screen_mem[1], SCREEN + 8);
-    if (chip_mem) os_free(chip_mem, COP_MEM);
-    screen_mem[0] = screen_mem[1] = chip_mem = 0;
-    if (gfxbase) os_closelib(gfxbase);
-    gfxbase = 0;
-}
-
-int platform_init(void)
-{
-    int i;
-    u8 *p;
-    gfxbase = os_openlib("graphics.library", 33);
-    if (!gfxbase) {
-        print(DEMO_NAME ": needs graphics.library v33\n");
-        return 0;
-    }
-    chip_mem = os_alloc(COP_MEM, MEMF_CHIP | MEMF_CLEAR);
-    fast = os_alloc(SCREEN, MEMF_FAST | MEMF_CLEAR);
-    for (i = 0; i < 2; i++) {
-        screen_mem[i] = os_alloc(SCREEN + 8, MEMF_CHIP | MEMF_CLEAR);
-        if (screen_mem[i]) screen[i] = (u8 *)(((u32)screen_mem[i] + 7) & ~7UL);
-    }
-    if (!chip_mem || !screen_mem[0] || !screen_mem[1]) {
-        print(DEMO_NAME ": not enough chip RAM (needs about 100K)\n");
-        platform_shutdown();
-        return 0;
-    }
-    p = (u8 *)(((u32)chip_mem + 7) & ~7UL);
-    null_sprite = (u32 *)(p + COP_WORDS * 2 * COP_LISTS);
-    aga = (REG(0x07c) & 0xff) == 0xf8;    /* Lisa answers 0xf8 */
-    for (i = 0; i < COP_LISTS; i++) {
-        int k = COP_LISTS == 4 ? i >> 1 : i, half = COP_LISTS == 4 && (i & 1);
-        cop[k][half] = (u16 *)(p + COP_WORDS * 2 * i);
-        build_copper(cop[k][half], screen[k], half);
-    }
-
-    old_view = *(void **)((u8 *)gfxbase + 34);
-    old_cop = *(u32 *)((u8 *)gfxbase + 38);
-    gfx_loadview(gfxbase, 0);
-    gfx_waittof(gfxbase);
-    gfx_waittof(gfxbase);
-    gfx_ownblitter(gfxbase);
-    os_forbid();
-    old_dmacon = REG(DMACONR);
-    old_intena = REG(INTENAR);
-    old_adkcon = REG(ADKCONR);
-    wait_line();
-    REG(INTENA) = 0x7fff;
-    REG(INTREQ) = 0x7fff;
-    REG(DMACON) = 0x7fff;
-    REG(POTGO) = 0xff00;
-    taken = 1;
-    shown = 0;
-    REGL(COP1LC) = (u32)cop[0][0];
-    REG(COPJMP1) = 0;
-    REG(DMACON) = DMAF_SETCLR | DMAF_DMAEN | DMAF_BPLEN | DMAF_COPEN | DMAF_BLTEN | DMAF_SPREN;
-    return 1;
-}
-
-/* ---- frames ---- */
-
-void clear_fast_68k(void *p, uint32_t bytes);
-static void clear_display(void)
-{
-    u8 *b = fast ? fast : screen[1 - shown];
-    if (fast) clear_fast_68k(fast, SCREEN);
-    else {
-    /* the blitter clears all five planes in one go: 1000 lines of 20 words */
-    wait_blit();
-    REG(BLTCON0) = 0x0100;
-    REG(BLTCON1) = 0;
-    REG(BLTDMOD) = 0;
-    REGL(BLTDPT) = (u32)b;
-    REG(BLTSIZE) = (u16)((5 * DEMO_H) << 6 | (ROWB / 2));
-    wait_blit();
-    }
-}
-int platform_begin(struct surf *s)
-{
-    u8 *b = fast ? fast : screen[1 - shown];
-    /* scene_draw's r_clear invokes this once; no duplicate frame clear. */
-    r_setup_planar(b, ROWB, (int32_t)PLANE, DEMO_W, DEMO_H, clear_display);
-    s->buf = 0;
-    s->w = DEMO_W;
-    s->h = DEMO_H;
-    s->planes = b;
-    s->bpr = ROWB;
-    s->psize = (int32_t)PLANE;
-    s->pens = 0;
-    return 1;
-}
-
-void platform_end(void)
-{
-    /* the copper starts from COP1LC at the vertical blank: the new screen
-     * from then on, and the old one free to draw into */
-    int half = 0;
-    if (fast) {
-        const u32 *src = (const u32 *)fast;
-        u32 *dst = (u32 *)screen[1-shown], n = SCREEN/16;
-        while (n--) { dst[0]=src[0]; dst[1]=src[1]; dst[2]=src[2]; dst[3]=src[3]; src+=4; dst+=4; }
-    }
-    shown = 1 - shown;
-    REGL(COP1LC) = (u32)cop[shown][half];
-    REG(INTREQ) = 0x0020;
-    while (!(REG(INTREQR) & 0x0020)) ;
-}
-
 
 /* Mouse counters are signed deltas; no Intuition is active during takeover. */
 void platform_input(Input *in)
@@ -327,6 +161,7 @@ void platform_input(Input *in)
             case 0x25:case 0x50:in->key=KEY_HELP;break;
             case 0x59:in->key=KEY_QUIT;break;
             case 0x42:in->key=KEY_TAB;break;
+            case 0x22:in->key=KEY_DETAIL;break;
             default:break;
             }
         }
