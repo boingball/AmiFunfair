@@ -1,12 +1,13 @@
 #ifndef PARK_H
 #define PARK_H
 #include <stdint.h>
-#define MAP 32
+#define MAP 64
 #define MAX_ITEMS 96
 #define MAX_GUESTS 120
 #define ITEM_COUNT 21
-#define GATE_X 16
-#define GATE_Y 30
+#define GATE_X (MAP/2)
+#define GATE_Y (MAP-2)
+#define CAMERA_STRAIGHT 2048
 enum { RIDES, STANDS, STAFF, LANDSCAPE, PARK_MENU };
 enum { SELECT, BUILD, ENTRANCE, EXIT, PATH, ERASE, TREE };
 enum { BOUNCY, GHOST, WOODEN, CORKSCREW, MOUSE, ICECREAM, CANDY, TOILETS,
@@ -46,6 +47,7 @@ typedef struct {
     int selected,pending,tool,buy_type,rotation,colour,speed;
     int hover_x,hover_y,category,page,started,show_help;
     int camera_x,camera_y,camera_yaw,camera_distance;
+    int view_2d;
     char message[100];
 } Park;
 extern const ItemDef catalogue[ITEM_COUNT];

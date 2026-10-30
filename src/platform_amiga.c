@@ -180,7 +180,7 @@ static void sample_input_irq(void){
 static int raw_key(int code){switch(code){
  case 0x45:return KEY_ESC;case 0x13:return KEY_ROTATE;case 0x31:return KEY_BACKROTATE;
  case 0x40:return KEY_PAUSE;case 0x25:case 0x50:return KEY_HELP;case 0x59:return KEY_QUIT;
- case 0x42:return KEY_TAB;case 0x22:return KEY_DETAIL;
+ case 0x34:return KEY_VIEW;case 0x42:return KEY_TAB;case 0x22:return KEY_DETAIL;
  case 0x4f:return KEY_LEFT;case 0x4e:return KEY_RIGHT;case 0x4c:return KEY_UP;case 0x4d:return KEY_DOWN;
  case 0x10:return KEY_ORBIT_L;case 0x12:return KEY_ORBIT_R;
  case 0x0c:case 0x5e:return KEY_ZOOM_IN;case 0x0b:case 0x4a:return KEY_ZOOM_OUT;

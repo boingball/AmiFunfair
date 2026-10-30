@@ -32,8 +32,8 @@ void park_init(Park *p,int d){
  p->cash=p->difficulty==0?500000:p->difficulty==1?250000:100000;
  p->selected=p->pending=-1;p->buy_type=-1;p->hover_x=p->hover_y=-1;
  p->ticket=10;p->park_open=1;p->rng=0xaff2026;p->day=1;p->speed=1;
- p->camera_x=1024;p->camera_y=1050;p->camera_yaw=2300;p->camera_distance=2400;
- for(y=25;y<=30;y++)p->paths[y][GATE_X]=1;
+ p->camera_x=GATE_X*64+32;p->camera_y=(GATE_Y-14)*64+32;p->camera_yaw=CAMERA_STRAIGHT;p->camera_distance=2400;
+ for(y=GATE_Y-5;y<=GATE_Y;y++)p->paths[y][GATE_X]=1;
  park_connect(p);park_message(p,"Welcome! Choose Rides or Stands below.");
 }
 void park_dimensions(int t,int r,int *w,int *h){
@@ -55,7 +55,7 @@ int park_can_place(const Park *p,int t,int x,int y,int rot){
  int xx,yy,w,h;if(t<0||t>=ITEM_COUNT)return 0;park_dimensions(t,rot,&w,&h);
  if(!inside(x,y)||!inside(x+w-1,y+h-1))return 0;
  for(yy=y;yy<y+h;yy++)for(xx=x;xx<x+w;xx++)
-  if(p->paths[yy][xx]||p->trees[yy][xx]||park_at(p,xx,yy)>=0||(yy>=29&&abs_i(xx-GATE_X)<=2))return 0;
+  if(p->paths[yy][xx]||p->trees[yy][xx]||park_at(p,xx,yy)>=0||(yy>=GATE_Y-1&&abs_i(xx-GATE_X)<=2))return 0;
  return 1;
 }
 void park_cancel(Park *p){
@@ -223,22 +223,25 @@ void park_tick(Park *p){
   }
  }
 }
+static int demo_path(Park *p,int x,int y){return park_path(p,x+GATE_X-16,y+GATE_Y-30);}
+static int demo_place(Park *p,int x,int y){return park_place(p,x+GATE_X-16,y+GATE_Y-30);}
+static int demo_tree(Park *p,int x,int y){return park_tree(p,x+GATE_X-16,y+GATE_Y-30);}
 void park_demo(Park *p){
  /* Optional showcase, built through the same purchase and gate validation. */
  int x,y;park_init(p,0);p->started=1;
- for(x=4;x<=27;x++)park_path(p,x,23);
- for(y=4;y<=28;y++)park_path(p,16,y);
- for(x=3;x<=28;x++)park_path(p,x,12);
- park_choose(p,WOODEN);park_place(p,5,6);park_place(p,6,11);park_place(p,7,11);
- park_path(p,6,11);park_path(p,7,11);
- park_choose(p,CAROUSEL);park_place(p,20,18);park_place(p,20,22);park_place(p,21,22);
- park_path(p,20,22);park_path(p,21,22);
- park_choose(p,PIRATE);park_place(p,8,19);park_place(p,8,22);park_place(p,9,22);
- park_path(p,8,22);park_path(p,9,22);
- park_choose(p,TEACUPS);park_place(p,21,8);park_place(p,21,11);park_place(p,22,11);
- park_path(p,21,11);park_path(p,22,11);
- park_choose(p,ICECREAM);park_place(p,17,14);
- park_choose(p,CHIPS);park_place(p,13,19);
- for(x=3;x<28;x+=3){park_tree(p,x,25);park_tree(p,x,3);}
+ for(x=4;x<=27;x++)demo_path(p,x,23);
+ for(y=4;y<=28;y++)demo_path(p,16,y);
+ for(x=3;x<=28;x++)demo_path(p,x,12);
+ park_choose(p,WOODEN);demo_place(p,5,6);demo_place(p,6,11);demo_place(p,7,11);
+ demo_path(p,6,11);demo_path(p,7,11);
+ park_choose(p,CAROUSEL);demo_place(p,20,18);demo_place(p,20,22);demo_place(p,21,22);
+ demo_path(p,20,22);demo_path(p,21,22);
+ park_choose(p,PIRATE);demo_place(p,8,19);demo_place(p,8,22);demo_place(p,9,22);
+ demo_path(p,8,22);demo_path(p,9,22);
+ park_choose(p,TEACUPS);demo_place(p,21,8);demo_place(p,21,11);demo_place(p,22,11);
+ demo_path(p,21,11);demo_path(p,22,11);
+ park_choose(p,ICECREAM);demo_place(p,17,14);
+ park_choose(p,CHIPS);demo_place(p,13,19);
+ for(x=3;x<28;x+=3){demo_tree(p,x,25);demo_tree(p,x,3);}
  park_hire(p,0);park_hire(p,1);p->selected=-1;park_message(p,"AmiFunFair showcase. Build your own fair from the bar.");
 }

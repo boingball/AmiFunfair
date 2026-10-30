@@ -17,6 +17,8 @@ const struct ramp ramps[]={
  {3,{23,24,4}}, {3,{27,1,2}}
 };
 static const int colours[6]={R_RED,R_BLUE,R_YELLOW,R_PURPLE,R_TEAL,R_WHITE};
+SceneCounts scene_counts;
+int scene_culling=1;
 static Park *world;
 static const struct surf *surface;
 static int ox,oy,rot,spanx,spany;
@@ -185,6 +187,7 @@ static void gate(int x,int y,int colour){
  {int32_t p[12]={xx-22,yy,35,xx+22,yy,35,xx+22,yy,48,xx-22,yy,48};sh_flat(p,4,colour);}
 }
 static void item_draw(void *arg){
+ scene_counts.items++;
  int id=(int)(intptr_t)arg;Attraction *a=&world->items[id];ox=a->x*64;oy=a->y*64;rot=a->rotation;
  spanx=catalogue[a->type].w*64;spany=catalogue[a->type].h*64;
  tick=(a->complete&&a->open&&a->connected&&a->condition>10)?(int)(world->ticks&65535):0;
@@ -197,18 +200,24 @@ static void guest_draw(void *arg){
  if(!r_project(&feet,&sx,&sy)||!r_project(&head,&hx,&hy))return;
  {int height=imax(2,(sy-hy+15)/16),width=imax(1,height*V.fx/V.fy/3),xx=sx>>4,yy=hy>>4;
   static const int shirts[6]={14,17,5,20,29,4};
+  if(xx+width<V.wx0||xx-width>=V.wx1||yy+height<V.wy0||yy>=V.wy1)return;
+  scene_counts.guests++;
   r_rect(xx-width/2,yy+height/3,width,imax(1,height*2/3),shirts[g->colour]);
   r_disc(hx,hy+(height/6)*16,imax(8,height*16*V.fx/V.fy/5),25);
  }
 }
-static void tree_draw(void *arg){int id=(int)(intptr_t)arg;int x=(id%MAP)*64+32,y=(id/MAP)*64+32;
+static void tree_draw(void *arg){scene_counts.trees++;int id=(int)(intptr_t)arg;int x=(id%MAP)*64+32,y=(id/MAP)*64+32;
  sh_box(x-3,y-3,0,x+3,y+3,30,R_WOOD,R_WOOD);sh_cone(x,y,23,0,20,85,6,R_GRASS,-1);}
 static void gate_draw(void *arg){int id=(int)(intptr_t)arg;Attraction *a=&world->items[id/2];
  if(id&1)gate(a->xx,a->xy,14);else gate(a->ex,a->ey,18);}
 static void entrance_draw(void *unused){int x=GATE_X*64+32,y=GATE_Y*64+32;(void)unused;
  sh_box(x-75,y-20,0,x-45,y+20,110,R_RED,R_YELLOW);sh_box(x+45,y-20,0,x+75,y+20,110,R_BLUE,R_YELLOW);
  sh_box(x-80,y-23,100,x+80,y+23,133,R_RED,R_YELLOW);
- {struct pvert p;r_pvert(x,y,115,&p);if(!(p.code&1))ui_text(surface,(p.sx>>4)*SCREEN_W/V.w-24,(p.sy>>4)*SCREEN_H/V.h,"FUN FAIR",5);}
+ {struct pvert p;int sx,sy;r_pvert(x,y,115,&p);
+  if(!(p.code&1)){sx=(p.sx>>4)*SCREEN_W/V.w-24;sy=(p.sy>>4)*SCREEN_H/V.h;
+   if(sx>=0&&sx+48<=SCREEN_W&&sy>=VIEW_TOP&&sy+7<=VIEW_BOTTOM)ui_text(surface,sx,sy,"FUN FAIR",5);
+  }
+ }
 }
 void scene_camera(const Park *p){
  int horizontal=p->camera_distance*3/4;
@@ -217,15 +226,57 @@ void scene_camera(const Park *p){
  r_camera(p->camera_x-(isin(p->camera_yaw)*horizontal>>14),
           p->camera_y-(icos(p->camera_yaw)*horizontal>>14),p->camera_distance,p->camera_yaw,600);
 }
+static int ray_plane(int mx,int my,int z,int *wx,int *wy){
+ int rx,ry,rz=16384,dx,dy,dz,t;
+ mx=mx*V.w/SCREEN_W;my=my*V.h/SCREEN_H;
+ rx=(mx-V.cx)*16384/V.fx;ry=(V.cy-my)*16384/V.fy;
+ dx=rx;dy=(ry*V.spit+rz*V.cpit)>>14;dz=(ry*V.cpit-rz*V.spit)>>14;
+ if(dz>=-100)return 0;t=((z-V.camz)*1024)/dz;if(t<=0)return 0;
+ rx=(dx*V.cyaw+dy*V.syaw)>>14;ry=(-dx*V.syaw+dy*V.cyaw)>>14;
+ *wx=V.camx+rx*t/1024;*wy=V.camy+ry*t/1024;return 1;
+}
+void scene_visible_map(const Park *p,MapWindow *b){
+ int i,z,x,y,minx=MAP*64,miny=MAP*64,maxx=0,maxy=0;
+ if(p->view_2d){topdown_visible(p,b);return;}
+ scene_camera(p);
+ if(!scene_culling){b->x0=b->y0=0;b->x1=b->y1=MAP;return;}
+ for(z=0;z<=240;z+=240)for(i=0;i<4;i++){
+  if(!ray_plane(i&1?SCREEN_W:0,i&2?VIEW_BOTTOM:VIEW_TOP,z,&x,&y)){
+   b->x0=b->y0=0;b->x1=b->y1=MAP;return;
+  }minx=imin(minx,x);miny=imin(miny,y);maxx=imax(maxx,x);maxy=imax(maxy,y);
+ }
+ b->x0=iclamp(minx/64-2,0,MAP);b->y0=iclamp(miny/64-2,0,MAP);
+ b->x1=iclamp(maxx/64+3,0,MAP);b->y1=iclamp(maxy/64+3,0,MAP);
+}
+static int visible_box(int x,int y,int w,int h,int z0,int z1){
+ int i,minx=32767,miny=32767,maxx=-32767,maxy=-32767;
+ if(!scene_culling)return 1;
+ if(r_box_hidden(x,y,w,h,z0,z1))return 0;
+ for(i=0;i<8;i++){
+  struct pvert p;r_pvert(x+(i&1?w:0),y+(i&2?h:0),i&4?z1:z0,&p);
+  if(p.code&1)return 1;
+  minx=imin(minx,p.sx);maxx=imax(maxx,p.sx);miny=imin(miny,p.sy);maxy=imax(maxy,p.sy);
+ }
+ return maxx>=V.wx0*16&&minx<V.wx1*16&&maxy>=V.wy0*16&&miny<V.wy1*16;
+}
+static int in_window(const MapWindow *b,int x,int y,int w,int h){
+ return x<b->x1&&x+w>b->x0&&y<b->y1&&y+h>b->y0;
+}
 static uint8_t *ground_cache;
 static uint32_t ground_capacity;
 static uint8_t saved_paths[MAP][MAP],saved_reachable[MAP][MAP];
 static int cache_valid,cache_x,cache_y,cache_yaw,cache_distance,cache_w,cache_h,cache_planar,cache_bpr;
 void scene_cache_bind(void *memory,uint32_t bytes){ground_cache=memory;ground_capacity=bytes;cache_valid=0;}
 static void ground_rect(int x0,int y0,int x1,int y1,int z,int col){
- int32_t v[12]={x0*64,y0*64,z,x1*64,y0*64,z,x1*64,y1*64,z,x0*64,y1*64,z};sh_flat(v,4,col);
+ struct pvert v[4];const struct pvert *vp[4];int i,near=0,minx=32767,miny=32767,maxx=-32767,maxy=-32767;
+ for(i=0;i<4;i++){
+  r_pvert((i==1||i==2?x1:x0)*64,(i>=2?y1:y0)*64,z,&v[i]);vp[i]=&v[i];near|=v[i].code&1;
+  if(!(v[i].code&1)){minx=imin(minx,v[i].sx);maxx=imax(maxx,v[i].sx);miny=imin(miny,v[i].sy);maxy=imax(maxy,v[i].sy);}
+ }
+ if(scene_culling&&!near&&(maxx<V.wx0*16||minx>=V.wx1*16||maxy<V.wy0*16||miny>=V.wy1*16))return;
+ r_ppoly(vp,4,col,0);
 }
-static void draw_ground(Park *p,const struct surf *s){
+static void draw_ground(Park *p,const struct surf *s,const MapWindow *b){
  uint32_t size=s->planes?(uint32_t)s->psize*5:(uint32_t)s->w*s->h;
  uint8_t *dest=s->planes?s->planes:s->buf;int x,y;
  int can_cache=ground_cache&&ground_capacity>=size;
@@ -238,8 +289,11 @@ static void draw_ground(Park *p,const struct surf *s){
  ground_rect(0,0,MAP,MAP,0,11);
  ground_rect(0,0,MAP,1,1,9);ground_rect(0,MAP-1,MAP,MAP,1,9);
  ground_rect(0,1,1,MAP-1,1,9);ground_rect(MAP-1,1,MAP,MAP-1,1,9);
- for(y=1;y<MAP-1;y++)for(x=1;x<MAP-1;){
+ for(y=imax(1,b->y0);y<imin(MAP-1,b->y1);y++)for(x=imax(1,b->x0);x<imin(MAP-1,b->x1);){
   if(p->paths[y][x]){int start=x,col=p->reachable[y][x]?24:22;
+   /* Keep original run endpoints: shortening a perspective edge can change
+    * its sub-pixel rounding even though the cut lies beyond the viewport. */
+   while(start>1&&p->paths[y][start-1]&&(p->reachable[y][start-1]?24:22)==col)start--;
    do{x++;}while(x<MAP-1&&p->paths[y][x]&&(p->reachable[y][x]?24:22)==col);
    ground_rect(start,y,x,y+1,1,col);
   }else x++;
@@ -251,11 +305,15 @@ static void draw_ground(Park *p,const struct surf *s){
  }else cache_valid=0;
 }
 void scene_draw(Park *p,const struct surf *s){
- int x,y,i;world=p;surface=s;scene_camera(p);draw_ground(p,s);
+ int x,y,i;MapWindow b;world=p;surface=s;memset(&scene_counts,0,sizeof(scene_counts));
+ if(p->view_2d){topdown_draw(p,s);return;}
+ scene_visible_map(p,&b);draw_ground(p,s,&b);
+ scene_counts.cells=(b.x1-b.x0)*(b.y1-b.y0);
  /* Ground overlays are drawn before the structures. */
  if(p->selected>=0&&p->items[p->selected].used){Attraction *a=&p->items[p->selected];int w,h;
   park_dimensions(a->type,a->rotation,&w,&h);
-  for(y=a->y;y<a->y+h;y++)for(x=a->x;x<a->x+w;x++)tile(x,y,3,5);
+  if(in_window(&b,a->x,a->y,w,h)&&visible_box(a->x*64,a->y*64,w*64,h*64,3,4))
+   for(y=a->y;y<a->y+h;y++)for(x=a->x;x<a->x+w;x++)tile(x,y,3,5);
  }
  if(p->hover_x>=0&&p->hover_y>=0&&p->tool!=SELECT){int w=1,h=1,col=18;
   if(p->tool==BUILD){park_dimensions(p->buy_type,p->rotation,&w,&h);col=park_can_place(p,p->buy_type,p->hover_x,p->hover_y,p->rotation)?18:14;}
@@ -265,26 +323,20 @@ void scene_draw(Park *p,const struct surf *s){
  r_sort_begin(10000);
  for(i=0;i<MAX_ITEMS;i++)if(p->items[i].used){Attraction *a=&p->items[i];int w,h;
   park_dimensions(a->type,a->rotation,&w,&h);
-  if(!r_box_hidden(a->x*64-32,a->y*64-32,w*64+64,h*64+64,0,240))
+  if(in_window(&b,a->x,a->y,w,h)&&visible_box(a->x*64-32,a->y*64-32,w*64+64,h*64+64,0,240))
    r_sort_add(sh_depth(a->x*64+w*32,a->y*64+h*32,0),item_draw,(void *)(intptr_t)i);
-  if(a->ex>=0)r_sort_add(sh_depth(a->ex*64+32,a->ey*64+32,20),gate_draw,(void *)(intptr_t)(i*2));
-  if(a->xx>=0)r_sort_add(sh_depth(a->xx*64+32,a->xy*64+32,20),gate_draw,(void *)(intptr_t)(i*2+1));
+  if(a->ex>=0&&in_window(&b,a->ex,a->ey,1,1)&&visible_box(a->ex*64,a->ey*64,64,64,0,55))r_sort_add(sh_depth(a->ex*64+32,a->ey*64+32,20),gate_draw,(void *)(intptr_t)(i*2));
+  if(a->xx>=0&&in_window(&b,a->xx,a->xy,1,1)&&visible_box(a->xx*64,a->xy*64,64,64,0,55))r_sort_add(sh_depth(a->xx*64+32,a->xy*64+32,20),gate_draw,(void *)(intptr_t)(i*2+1));
  }
- for(y=1;y<MAP-1;y++)for(x=1;x<MAP-1;x++)if(p->trees[y][x]&&!r_box_hidden(x*64,y*64,64,64,0,90))r_sort_add(sh_depth(x*64+32,y*64+32,30),tree_draw,(void *)(intptr_t)(y*MAP+x));
- for(i=0;i<MAX_GUESTS;i++)if(p->guests[i].used&&!p->guests[i].riding){Guest *g=&p->guests[i];r_sort_add(sh_depth(g->x*64+32,g->y*64+32,12),guest_draw,(void *)(intptr_t)i);}
- r_sort_add(sh_depth(GATE_X*64+32,GATE_Y*64+32,60),entrance_draw,0);r_sort_draw();
+ for(y=imax(1,b.y0);y<imin(MAP-1,b.y1);y++)for(x=imax(1,b.x0);x<imin(MAP-1,b.x1);x++)if(p->trees[y][x]&&visible_box(x*64,y*64,64,64,0,90))r_sort_add(sh_depth(x*64+32,y*64+32,30),tree_draw,(void *)(intptr_t)(y*MAP+x));
+ for(i=0;i<MAX_GUESTS;i++)if(p->guests[i].used&&!p->guests[i].riding){Guest *g=&p->guests[i];if(in_window(&b,g->x,g->y,2,2))r_sort_add(sh_depth(g->x*64+32,g->y*64+32,12),guest_draw,(void *)(intptr_t)i);}
+ if(visible_box(GATE_X*64-64,GATE_Y*64,192,64,0,140))r_sort_add(sh_depth(GATE_X*64+32,GATE_Y*64+32,60),entrance_draw,0);r_sort_draw();
  r_window_off();
 }
 int scene_pick(const Park *p,int mx,int my,int *x,int *y){
- /* Invert Ami3D's camera ray, intersect z=0. All arithmetic stays bounded. */
- int rx,ry,rz,dx,dy,dz,t;
+ int wx,wy;
+ if(p->view_2d)return topdown_pick(p,mx,my,x,y);
  if(mx<0||mx>=SCREEN_W||my<VIEW_TOP||my>=VIEW_BOTTOM)return 0;
- scene_camera(p);
- mx=mx*V.w/SCREEN_W;my=my*V.h/SCREEN_H;
- rx=(mx-V.cx)*16384/V.fx;ry=(V.cy-my)*16384/V.fy;
- rz=16384;dx=rx;dy=(ry*V.spit+rz*V.cpit)>>14;dz=(ry*V.cpit-rz*V.spit)>>14;
- if(dz>=-100)return 0;t=(-V.camz*1024)/dz;
- rx=(dx*V.cyaw+dy*V.syaw)>>14;ry=(-dx*V.syaw+dy*V.cyaw)>>14;
- dx=V.camx+rx*t/1024;dy=V.camy+ry*t/1024;
- *x=dx/64;*y=dy/64;return dx>=0&&dy>=0&&*x<MAP&&*y<MAP;
+ scene_camera(p);if(!ray_plane(mx,my,0,&wx,&wy))return 0;
+ *x=wx/64;*y=wy/64;return wx>=0&&wy>=0&&*x<MAP&&*y<MAP;
 }

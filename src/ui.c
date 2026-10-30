@@ -4,7 +4,9 @@
 extern const uint8_t font8[64][8];
 /* UI/input use a stable 320x200 logical layout in every native mode. */
 static void ui_rect(const struct surf *s,int x,int y,int w,int h,int col){
- int sx=s->w/SCREEN_W,sy=s->h/SCREEN_H;surf_rect(s,x*sx,y*sy,w*sx,h*sy,col);
+ int sx=s->w/SCREEN_W,sy=s->h/SCREEN_H;
+ if(!s->pens&&s->buf==V.buf&&s->planes==V.planes)r_rect(x*sx,y*sy,w*sx,h*sy,col);
+ else surf_rect(s,x*sx,y*sy,w*sx,h*sy,col);
 }
 static void ui_frame(const struct surf *s,int x,int y,int w,int h,int col){
  ui_rect(s,x,y,w,1,col);ui_rect(s,x,y+h-1,w,1,col);
@@ -17,6 +19,10 @@ static void cycle_detail(Park *p){
  else park_message(p,mode==DETAIL_NORMAL?"Detail: NORMAL 320x200.":mode==DETAIL_HIRES?"Detail: HIRES 640x200.":"Detail: HIRES LACED 640x400.");
 }
 
+static void cycle_view(Park *p){
+ p->view_2d=!p->view_2d;
+ park_message(p,p->view_2d?"2D top-down view. V returns to 3D.":"3D view. V switches to fast 2D view.");
+}
 static int hit(int x,int y,int bx,int by,int w,int h){return x>=bx&&x<bx+w&&y>=by&&y<by+h;}
 void ui_text(const struct surf *s,int x,int y,const char *str,int colour){
  int c,row,b,sx=s->w/SCREEN_W,sy=s->h/SCREEN_H;
@@ -49,7 +55,7 @@ static void button(const struct surf *s,int x,int y,int w,int h,const char *name
  ui_text(s,x+(w-str_len(name)*6)/2,y+(h-6)/2,name,disabled?22:on?5:4);
 }
 static void brief(const struct surf *s,int x,int y,const char *name,int max,int col){
- char b[40];int i=0;while(name[i]&&i<max){b[i]=name[i];i++;}b[i]=0;ui_text(s,x,y,b,col);
+ char b[64];int i=0;max=imin(max,(int)sizeof(b)-1);while(name[i]&&i<max){b[i]=name[i];i++;}b[i]=0;ui_text(s,x,y,b,col);
 }
 static int inspector(const Park *p){return p->tool==BUILD||p->selected>=0;}
 static void inspect_draw(Park *p,const struct surf *s){
@@ -103,7 +109,7 @@ void ui_draw(Park *p,const struct surf *s,const Input *in){
   labelnum(s,7,157,"ENTRY ",p->ticket,5);button(s,73,155,18,13,"-",0,0);button(s,94,155,18,13,"+",0,0);
   button(s,118,155,69,13,p->park_open?"PARK OPEN":"CLOSED",p->park_open,0);
   button(s,193,155,57,13,p->paused?"RESUME":"PAUSE",p->paused,0);button(s,256,155,59,13,"NEW PARK",0,0);
-  labelnum(s,7,175,"TOTAL INCOME ",p->earned,4);str_cat(str_cat(b,"DETAIL "),fair_modes[fair_detail].name);button(s,181,171,134,12,b,0,0);
+  labelnum(s,7,175,"INCOME ",p->earned,4);button(s,143,171,70,12,p->view_2d?"VIEW 2D":"VIEW 3D",p->view_2d,0);button(s,217,171,98,12,fair_modes[fair_detail].name,0,0);
  }
  button(s,0,186,56,14,"RIDES",p->category==RIDES,0);button(s,56,186,56,14,"STANDS",p->category==STANDS,0);
  button(s,112,186,56,14,"STAFF",p->category==STAFF,0);button(s,168,186,56,14,"PATHS",p->category==LANDSCAPE,0);
@@ -123,12 +129,12 @@ void ui_draw(Park *p,const struct surf *s,const Input *in){
   ui_text(s,18,67,"3. PLACE RIDE ENTRANCE, THEN EXIT.",4);
   ui_text(s,18,79,"4. PATH BOTH GATES TO THE FRONT GATE.",4);
   ui_text(s,18,91,"CLICK RIDES TO SET PRICE/COLOUR/SPEED.",18);
-  ui_text(s,18,103,"ARROWS PAN. Q/E ORBIT. +/- OR WHEEL ZOOM.",4);
+  ui_text(s,18,103,"ARROWS PAN. Q/E ORBIT 3D. +/- ZOOM.",4);
   ui_text(s,18,115,"DRAG TO PAINT PATHS. RMB/ESC CANCEL.",4);
-  ui_text(s,18,127,"SPACE PAUSE. D DETAIL. F10 QUITS.",4);
+  ui_text(s,18,127,"SPACE PAUSE. D DETAIL. V 2D/3D.",4);
   ui_text(s,18,139,"STAFF: 500 HIRE; 250/350 DAILY WAGES.",23);
   ui_text(s,18,151,"RIDES WEAR OUT. MECHANICS REPAIR THEM.",23);
-  ui_text(s,52,166,"CLICK OR H TO RETURN TO PARK",5);
+  ui_text(s,52,166,"CLICK/H RETURN. F10 QUITS.",5);
  }
  /* Software pointer is shared by SDL and the Amiga hardware platform. */
  if(!fair_hardware_pointer){
@@ -153,25 +159,29 @@ static void inspect_click(Park *p,int x,int y){
  }
 }
 void game_input(Park *p,const Input *in){
- int x,y;if(in->key==KEY_DETAIL){cycle_detail(p);return;}
+ int x,y;if(in->key==KEY_VIEW){cycle_view(p);return;}
+ if(in->key==KEY_DETAIL){cycle_detail(p);return;}
  if(in->key==KEY_HELP){p->show_help=!p->show_help;return;}
  if(p->show_help){if(in->left||in->key==KEY_ESC)p->show_help=0;return;}
  if(!p->started){
   if(in->left&&in->my>=94&&in->my<125&&in->mx>=26&&in->mx<294){
-   int d=in->mx<114?0:in->mx<206?1:2;park_init(p,d);p->started=1;
-  }else if(in->left&&hit(in->mx,in->my,62,135,196,22))park_demo(p);
+   int d=in->mx<114?0:in->mx<206?1:2,view=p->view_2d;park_init(p,d);p->view_2d=view;p->started=1;
+  }else if(in->left&&hit(in->mx,in->my,62,135,196,22)){int view=p->view_2d;park_demo(p);p->view_2d=view;}
   return;
  }
  if(in->right||in->key==KEY_ESC)park_cancel(p);
  if(in->key==KEY_ROTATE)p->rotation=(p->rotation+1)&3;
  if(in->key==KEY_BACKROTATE)p->rotation=(p->rotation+3)&3;
- if(in->key==KEY_LEFT)p->camera_x-=64;if(in->key==KEY_RIGHT)p->camera_x+=64;
- if(in->key==KEY_UP)p->camera_y+=64;if(in->key==KEY_DOWN)p->camera_y-=64;
- if(in->key==KEY_ORBIT_L)p->camera_yaw=(p->camera_yaw-128)&4095;
- if(in->key==KEY_ORBIT_R)p->camera_yaw=(p->camera_yaw+128)&4095;
+ {int side=(in->key==KEY_RIGHT)-(in->key==KEY_LEFT),forward=(in->key==KEY_UP)-(in->key==KEY_DOWN);
+  int yaw=p->view_2d?CAMERA_STRAIGHT:p->camera_yaw;
+  p->camera_x+=(icos(yaw)*side+isin(yaw)*forward)*64/16384;
+  p->camera_y+=(-isin(yaw)*side+icos(yaw)*forward)*64/16384;
+ }
+ if(!p->view_2d&&in->key==KEY_ORBIT_L)p->camera_yaw=(p->camera_yaw-128)&4095;
+ if(!p->view_2d&&in->key==KEY_ORBIT_R)p->camera_yaw=(p->camera_yaw+128)&4095;
  if(in->key==KEY_ZOOM_IN||in->wheel>0)p->camera_distance-=100;
  if(in->key==KEY_ZOOM_OUT||in->wheel<0)p->camera_distance+=100;
- p->camera_x=iclamp(p->camera_x,0,2048);p->camera_y=iclamp(p->camera_y,0,2048);
+ p->camera_x=iclamp(p->camera_x,0,MAP*64);p->camera_y=iclamp(p->camera_y,0,MAP*64);
  p->camera_distance=iclamp(p->camera_distance,550,3500);
  if(in->key==KEY_PAUSE)p->paused=!p->paused;
  if(in->key==KEY_TAB){p->category=(p->category+1)%5;p->page=0;}
@@ -179,7 +189,7 @@ void game_input(Park *p,const Input *in){
  if(!(inspector(p)&&hit(in->mx,in->my,208,17,109,112))&&scene_pick(p,in->mx,in->my,&x,&y)){
   p->hover_x=x;p->hover_y=y;
   if(in->left||(in->held&&(p->tool==PATH||p->tool==TREE))){
-   if(p->tool==SELECT&&y>=29&&x>=14&&x<=18){p->category=PARK_MENU;p->selected=-1;}
+   if(p->tool==SELECT&&y>=GATE_Y-1&&x>=GATE_X-2&&x<=GATE_X+2){p->category=PARK_MENU;p->selected=-1;}
    else park_place(p,x,y);
   }
  }
@@ -198,7 +208,8 @@ void game_input(Park *p,const Input *in){
  else if(p->category==LANDSCAPE){park_cancel(p);p->selected=-1;p->tool=x<107?PATH:x<212?TREE:ERASE;
   park_message(p,p->tool==PATH?"Drag paths to connect rides and stands to the gate.":p->tool==TREE?"Plant trees for 50 each.":"Click to sell a ride or remove a path/tree.");
  }else{
-  if(hit(x,y,181,171,134,12))cycle_detail(p);
+  if(hit(x,y,143,171,70,12))cycle_view(p);
+  if(hit(x,y,217,171,98,12))cycle_detail(p);
   if(hit(x,y,73,155,18,13)&&p->ticket)p->ticket--;
   if(hit(x,y,94,155,18,13)&&p->ticket<100)p->ticket++;
   if(hit(x,y,118,155,69,13))p->park_open=!p->park_open;

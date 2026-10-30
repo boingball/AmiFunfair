@@ -42,7 +42,7 @@ static int key(SDL_Keycode k){switch(k){
  case SDLK_LEFT:return KEY_LEFT;case SDLK_RIGHT:return KEY_RIGHT;case SDLK_UP:return KEY_UP;case SDLK_DOWN:return KEY_DOWN;
  case SDLK_q:return KEY_ORBIT_L;case SDLK_e:return KEY_ORBIT_R;case SDLK_PLUS:case SDLK_EQUALS:case SDLK_KP_PLUS:return KEY_ZOOM_IN;
  case SDLK_MINUS:case SDLK_KP_MINUS:return KEY_ZOOM_OUT;case SDLK_SPACE:return KEY_PAUSE;case SDLK_h:case SDLK_F1:return KEY_HELP;
- case SDLK_d:return KEY_DETAIL;case SDLK_F10:return KEY_QUIT;case SDLK_TAB:return KEY_TAB;default:return KEY_NONE;
+ case SDLK_v:return KEY_VIEW;case SDLK_d:return KEY_DETAIL;case SDLK_F10:return KEY_QUIT;case SDLK_TAB:return KEY_TAB;default:return KEY_NONE;
 }}
 void platform_input(Input *in){SDL_Event e;
  while(SDL_PollEvent(&e)){switch(e.type){

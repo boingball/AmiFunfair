@@ -10,8 +10,8 @@ Boot `AmiFunFair.adf` or copy `AmiFunFair` to your hard disk and run it from the
 Shell. Choose Easy, Medium or Hard, or **Play Showcase Park** for a populated
 example. Starting money is exactly **500,000 / 250,000 / 100,000**.
 
-Target: **68020 or better**, ECS/AGA, mouse, roughly 1 MB available memory.
-A **68030 with Fast RAM** is the intended first hardware test. The game starts at 320x200 in 32 colours. **D** or **Park > Detail** cycles
+Target: **68020 or better**, ECS/AGA, mouse, at least 2 MB available memory, with Fast RAM strongly recommended.
+A **68020/68030 with at least 2 MB Fast RAM** is a useful testing baseline. The game starts at 320x200 in 32 colours. **D** or **Park > Detail** cycles
 through the supported modes; the vertical window fits both PAL and NTSC.
 Fast RAM drawing is selected automatically when its allocation succeeds;
 otherwise the engine draws directly into chip RAM. No FPU is needed.
@@ -57,13 +57,36 @@ are culled before building their models. Route updates no longer clear unused
 attraction distance maps. If a terrain cache cannot be allocated, rendering still
 works normally.
 
-A controlled 100-frame Normal planar scene+UI benchmark under qemu-m68k
+For the earlier 32x32 version, a controlled 100-frame Normal planar scene+UI benchmark under qemu-m68k
 (`-cpu m68020`) took 0.302 s before and 0.114 s after these changes. This is a
 render-code comparison, **not** a real-Amiga FPS measurement: it excludes screen
 presentation, interrupts and chipset contention, and qemu is not cycle accurate.
-Run the current comparison loop with `make bench_68k`.
+Run the current 64x64 3D-versus-2D comparison with `make bench_68k`.
+The same showcase/Normal render test measured about 0.142 s for 3D and 0.042 s
+for 2D per 100 frames; these remain user-mode render timings, not real Amiga FPS.
 For a 14 MHz 68020, start with **Normal**. Hires doubles the pixel count and
 Hires Laced quadruples it; they remain options for faster CPUs.
+
+## Views, scrolling and the larger park
+
+The park is now **64x64 tiles**, four times the original 32x32 area. The entrance
+and showcase layout sit at the front of the larger site. The starting 3D view is
+straight ahead (0-degree map rotation), rather than angled about 20 degrees.
+
+Press **V**, or **Park > View**, to switch between the 3D park and a genuine
+**2D top-down renderer**. The 2D mode uses flat attraction icons, paths, trees,
+visitors and entrance/exit markers; it does not render any 3D ride geometry.
+Purchasing, footprint rotation, gates, pricing, staff and the simulation are
+shared, and switching views keeps an unfinished build. The 2D view is fixed
+north-up; Q/E orbit only the 3D view. D still selects display resolution in either
+view. The chosen view also survives the title/difficulty screen.
+
+Arrow keys pan toward the corresponding side of the screen, including after
+orbiting the 3D camera. The camera can scroll across the whole 64x64 site.
+Viewport bounds limit terrain/tree traversal, and off-screen rides, gates,
+guests and trees are rejected before their drawing work. Tall rides use a
+conservative height-aware bound so their tops do not disappear at screen edges.
+Objects outside the camera continue to participate in the simulation.
 
 ## Build a fair
 
@@ -105,6 +128,7 @@ seconds of simulation, and wages/upkeep are charged even if the park is closed.
 | Mouse wheel (PC) | Zoom |
 | Space | Pause / resume |
 | Tab | Cycle bottom categories |
+| V / Park > View | Toggle 2D top-down / 3D |
 | D / Park > Detail | Cycle Normal / Hires / Hires Laced |
 | H / F1 | Handbook |
 | F10 | Quit and restore the desktop |
@@ -192,7 +216,8 @@ artifacts. Its only upload is the game executable, ADF and test render.
 ## Layout
 
 * `src/park.c` / `park.h`: platform-independent simulation and placement rules.
-* `src/scene.c`: fixed-point Ami3D models, animation, camera and ground picking.
+* `src/scene.c`: Ami3D models, camera, viewport culling and ground picking.
+* `src/topdown.c`: 2D park renderer, icons and map picking.
 * `src/ui.c`: bottom menus, difficulty screen, inspectors and mouse interaction.
 * `src/detail.c` / `detail.h`: detail modes and field/buffer ownership.
 * `src/native_video.c`: testable native Copper lists and pointer palette.

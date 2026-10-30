@@ -21,6 +21,7 @@ int main(int argc,char **argv){
   park.items[0].complete=1;park.items[0].connected=1;park.tool=SELECT;park.pending=-1;
   park.camera_x=1050;park.camera_y=1220;park.camera_distance=950;park.camera_yaw=400;park.ticks=500;
  }}
+ if(argc>4)park.view_2d=atoi(argv[4])!=0;
  if(argc>3)fair_request_detail(atoi(argv[3]));fair_detail=fair_requested_detail;mode=&fair_modes[fair_detail];
  r_setup(pixels,mode->w,mode->h);s.buf=pixels;s.w=mode->w;s.h=mode->h;
  in.mx=160;in.my=90;scene_draw(&park,&s);ui_draw(&park,&s,&in);
