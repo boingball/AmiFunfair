@@ -1,0 +1,3 @@
+[submodule "ami3d"]
+	path = ami3d
+	url = https://github.com/boingball/Ami3D.git
