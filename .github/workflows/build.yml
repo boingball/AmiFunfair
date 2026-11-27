@@ -1,0 +1,50 @@
+name: Prototype checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  park:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Independent simulation and placement tests
+        run: make build/test_park build/test_detail build/test_pointer && build/test_park && build/test_detail && build/test_pointer
+  full-build:
+    runs-on: ubuntu-latest
+    env:
+      AMI3D_TOKEN: ${{ secrets.AMI3D_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check private engine access configuration
+        id: engine
+        run: |
+          if [ -n "$AMI3D_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo '::notice::Full rendering and Amiga builds require AMI3D_READ_TOKEN. Independent park tests still run.'
+          fi
+      - uses: actions/checkout@v4
+        if: steps.engine.outputs.enabled == 'true'
+        with:
+          repository: boingball/Ami3D
+          ref: ab066ed2b11755b3f12f3a255e250d4c9befe62e
+          path: ami3d
+          token: ${{ secrets.AMI3D_READ_TOKEN }}
+          persist-credentials: false
+      - name: Build dependencies
+        if: steps.engine.outputs.enabled == 'true'
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev gcc-m68k-linux-gnu qemu-user
+      - name: Check PC, 68k renderer and bootable Amiga build
+        if: steps.engine.outputs.enabled == 'true'
+        run: make test pc test_pc test_68k test_asan adf
+      - uses: actions/upload-artifact@v4
+        if: steps.engine.outputs.enabled == 'true'
+        with:
+          name: AmiFunFair-prototype
+          path: |
+            build/AmiFunFair
+            build/AmiFunFair.adf
+            build/showcase.ppm

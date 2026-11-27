@@ -1,1 +1,232 @@
-# AmiFunfair
+# AmiFunFair
+
+A native Amiga fairground management prototype using the **Ami3D** software
+renderer. Build a park, set admission and attraction prices, connect paths,
+hire staff, and watch animated rides and visitors.
+
+## Play on an Amiga
+
+Boot `AmiFunFair.adf` or copy `AmiFunFair` to your hard disk and run it from the
+Shell. Choose Easy, Medium or Hard, or **Play Showcase Park** for a populated
+example. Starting money is exactly **500,000 / 250,000 / 100,000**.
+
+Target: **68020 or better**, ECS/AGA, mouse, at least 2 MB available memory, with Fast RAM strongly recommended.
+A **68020/68030 with at least 2 MB Fast RAM** is a useful testing baseline. The game starts at 320x200 in 32 colours. **D** or **Park > Detail** cycles
+through the supported modes; the vertical window fits both PAL and NTSC.
+Fast RAM drawing is selected automatically when its allocation succeeds;
+otherwise the engine draws directly into chip RAM. No FPU is needed.
+
+| Detail | Render resolution | Native requirements |
+| --- | --- | --- |
+| Normal | 320x200 | ECS/AGA, about 125 KiB free chip RAM for display buffers |
+| Hires | 640x200 | AGA, about 245 KiB free chip RAM for display buffers |
+| Hires Laced | 640x400 | AGA, about 475 KiB free chip RAM for display buffers |
+
+These are display allocations in addition to the game/OS memory. At startup the
+platform reserves the largest supported buffers that fit, falling back to fewer
+choices if chip RAM is limited. Detail changes reuse those buffers and retain
+the park, camera and current build. Menus and mouse input keep their on-screen
+size while Ami3D renders the park at the selected resolution. SDL supports all
+three render sizes too.
+
+Interlace alternates even and odd image rows every vertical blank, including
+while a new frame is still rendering. A published picture stays immutable for
+both fields. The display changes mode only when the next complete picture is
+ready; no field wait can stall input or prevent cycling back to Normal.
+
+The executable and ADF are build-verified. Core gameplay and the 68k rendering
+paths have been tested under qemu-m68k; the AmigaOS screen takeover, keyboard,
+mouse and exit restoration still need testing in WinUAE and on real hardware.
+There is no measured real-Amiga frame-rate claim yet.
+
+## 68020 responsiveness and performance
+
+The native pointer is a hardware sprite sampled and positioned every PAL/NTSC
+vertical blank. Mouse movement counters are read at 50/60 Hz, independent of
+park rendering; this prevents the wraparound/reversed movement that occurred
+when the old version sampled once per slow frame. Click edges retain the
+position at which the button was pressed. Keyboard events are sampled in the
+same interrupt and queued for the game. The hardware pointer keeps its physical
+size in all detail modes and uses a separate AGA palette bank.
+
+With available Fast RAM, static terrain/path pixels are cached until the camera,
+layout, connectivity or resolution changes. Adjacent path tiles are combined,
+planar text is drawn in masked glyph batches, distant thin beams use one
+projected ribbon, and guests use small screen-facing figures. Off-screen rides
+are culled before building their models. Route updates no longer clear unused
+attraction distance maps. If a terrain cache cannot be allocated, rendering still
+works normally.
+
+For the earlier 32x32 version, a controlled 100-frame Normal planar scene+UI benchmark under qemu-m68k
+(`-cpu m68020`) took 0.302 s before and 0.114 s after these changes. This is a
+render-code comparison, **not** a real-Amiga FPS measurement: it excludes screen
+presentation, interrupts and chipset contention, and qemu is not cycle accurate.
+Run the current 64x64 3D-versus-2D comparison with `make bench_68k`.
+The same showcase/Normal render test measured about 0.142 s for 3D and 0.042 s
+for 2D per 100 frames; these remain user-mode render timings, not real Amiga FPS.
+For a 14 MHz 68020, start with **Normal**. Hires doubles the pixel count and
+Hires Laced quadruples it; they remain options for faster CPUs.
+
+## Views, scrolling and the larger park
+
+The park is now **64x64 tiles**, four times the original 32x32 area. The entrance
+and showcase layout sit at the front of the larger site. The starting 3D view is
+straight ahead (0-degree map rotation), rather than angled about 20 degrees.
+
+Press **V**, or **Park > View**, to switch between the 3D park and a genuine
+**2D top-down renderer**. The 2D mode uses flat attraction icons, paths, trees,
+visitors and entrance/exit markers; it does not render any 3D ride geometry.
+Purchasing, footprint rotation, gates, pricing, staff and the simulation are
+shared, and switching views keeps an unfinished build. The 2D view is fixed
+north-up; Q/E orbit only the 3D view. D still selects display resolution in either
+view. The chosen view also survives the title/difficulty screen.
+
+Arrow keys pan toward the corresponding side of the screen, including after
+orbiting the 3D camera. The camera can scroll across the whole 64x64 site.
+Viewport bounds limit terrain/tree traversal, and off-screen rides, gates,
+guests and trees are rejected before their drawing work. Tall rides use a
+conservative height-aware bound so their tops do not disappear at screen edges.
+Objects outside the camera continue to participate in the simulation.
+
+## Build a fair
+
+1. Open **Rides** or **Stands** in the bottom bar. The arrows page through the
+   catalogue. Items you cannot afford are greyed out.
+2. Choose an attraction. **R / Z** rotate the footprint clockwise / anticlockwise.
+   Colour and operating speed can be changed in the placement panel.
+3. Click a clear area to purchase and place the footprint.
+4. For a ride, click a free tile beside its edge for its **entrance**, then a
+   different adjacent tile for its **exit**. Both may be on existing paths.
+5. Use **Paths** to connect **both gates** back to the front entrance. A stand
+   only needs a connected path beside it. Disconnected paths appear darker.
+6. Click an attraction to adjust price, colour, speed, open/closed status or sell
+   it. The inspector shows condition, visits and connection status.
+
+Right click or Esc cancels a build. Cancelling during either gate stage removes
+the unfinished ride and refunds its **entire** purchase price. Completed rides
+sell for half price. Paths cost 20; decorative trees cost 50.
+
+Click the front entrance or **Park** to set admission, open/close the park,
+pause, or start another park. Expensive admission reduces demand; visitors reject
+overpriced attractions. Visitors follow cached shortest paths to attractions,
+wait for capacity, spend time riding, emerge at the exit, then eventually leave.
+
+**Staff** hires security and maintenance mechanics: 500 each to hire; daily
+wages of 250 and 350 respectively. Security reduces theft losses. Mechanics
+repair condition as rides wear out. Broken rides stop operating. A day is 60
+seconds of simulation, and wages/upkeep are charged even if the park is closed.
+
+| Control | Action |
+| --- | --- |
+| Left click | Select, purchase, place, use menus |
+| Hold left mouse | Paint paths or plant trees |
+| Right click / Esc | Cancel current tool / unfinished build |
+| R / Z | Rotate the selected footprint |
+| Arrow keys | Pan the park |
+| Q / E | Orbit the camera |
+| + / - | Zoom in / out |
+| Mouse wheel (PC) | Zoom |
+| Space | Pause / resume |
+| Tab | Cycle bottom categories |
+| V / Park > View | Toggle 2D top-down / 3D |
+| D / Park > Detail | Cycle Normal / Hires / Hires Laced |
+| H / F1 | Handbook |
+| F10 | Quit and restore the desktop |
+
+## Catalogue
+
+All 21 requested items have their own footprint and procedural model:
+
+| Rides and amusements | Stands and facilities |
+| --- | --- |
+| Bouncy castle | Ice cream stand |
+| Ghost train | Candy floss stand |
+| Wooden mine coaster | Toilets |
+| Corkscrew | Coffee shop |
+| Mini mouse | Fish and chips stand |
+| Tea cups | |
+| Pirate ship | |
+| Roundabout jets and planes | |
+| Dodgem cars | |
+| Horse carousel | |
+| Helter skelter | |
+| Railway with tracks and a moving train | |
+| Ski jump | |
+| Twister | |
+| Waltzer | |
+| Amusements: arcade/fruit machine building | |
+
+Coasters and the railway use **prebuilt circuits** in this prototype. There is
+no freeform track editor yet. Customisation currently covers colour, speed and
+price. Staff effects are park-wide rather than individual walking employees.
+Trees are decorative. Save/load, audio, guest needs/happiness, research, terrain
+height editing, and a full financial/end-game system are future work. Painter's
+order is used, so large ride models can show occasional overlap artefacts.
+
+## Build from source
+
+The engine is pinned as a submodule to
+`boingball/Ami3D@ab066ed2b11755b3f12f3a255e250d4c9befe62e`.
+The Ami3D repository is private, so the cloning account needs access. Its source
+is not duplicated in this public game repository.
+
+```sh
+git clone --recursive https://github.com/boingball/AmiFunfair.git
+cd AmiFunfair
+# For an existing clone:
+git submodule update --init --recursive
+
+# Linux PC version (SDL2 development files required):
+make pc
+build/AmiFunFair-PC
+
+# Native Amiga + bootable disk (stock m68k ELF GCC; no NDK required):
+make adf
+
+# Tests and a headless showcase image:
+make test
+# Optional native 68k C/assembler checks, with qemu-user and cross libc:
+make test_68k
+# Optional interactive frontend switching test (dummy SDL display):
+make test_pc
+```
+
+On Ubuntu, the build packages are `build-essential`, `libsdl2-dev`,
+`gcc-m68k-linux-gnu`, `python3` and (for `test_68k`) `qemu-user`.
+Override `CC_68K`, `QEMU_68K`, `SDL_CFLAGS` or `SDL_LIBS` when needed.
+
+`make build/test_park && build/test_park` works without fetching Ami3D.
+Full rendering tests compare all 21 models at all four rotations in all three
+detail modes, pixel for pixel between chunky and five-plane rendering. They also exercise ground
+picking at multiple camera angles, the menus, rotated footprints, gate
+validation, refunds, path connectivity, visitors, prices, staff and upkeep.
+Pointer tests cover counter wraparound during stalled rendering, queued click
+positions, event overflow and sprite coordinates. Terrain-cache invalidation and
+font output are compared against uncached/chunky rendering.
+Copper tests reconstruct every displayed plane row from both fields, and check
+triple-buffer ownership and mode transitions. SDL tests recreate the textures
+while cycling detail and check the D key.
+
+GitHub Actions always runs the independent park tests. For full PC, 68k and ADF
+builds, set the repository Actions secret **AMI3D_READ_TOKEN** to a token with
+read access to the engine repository. Full checks are explicitly skipped when
+that secret is absent; the workflow does not expose private engine sources as
+artifacts. Its only upload is the game executable, ADF and test render.
+
+## Layout
+
+* `src/park.c` / `park.h`: platform-independent simulation and placement rules.
+* `src/scene.c`: Ami3D models, camera, viewport culling and ground picking.
+* `src/topdown.c`: 2D park renderer, icons and map picking.
+* `src/ui.c`: bottom menus, difficulty screen, inspectors and mouse interaction.
+* `src/detail.c` / `detail.h`: detail modes and field/buffer ownership.
+* `src/native_video.c`: testable native Copper lists and pointer palette.
+* `src/pointer.c`: VBlank mouse/event queue and hardware sprite data.
+* `src/platform_amiga.c`: planar display, native input, AGA detail selection.
+* `src/vblank_68k.S`: VBlank field switching and vector-base glue.
+* `src/platform_sdl.c`: interactive PC frontend using the same game/render code.
+* `src/platform_host.c`: deterministic, display-free image generation.
+* `tests/`: gameplay, input and chunky/planar regression checks.
+
+Amiga startup, OS call wrappers and build conversion tools come from Ami3D;
+the fair's platform layer is adapted from its demo platform.
